@@ -1,0 +1,29 @@
+{
+  "name": "dayloop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted task auto-scheduler that writes your day to Google Calendar",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --disable-warning=ExperimentalWarning dist/server.js",
+    "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@googleapis/calendar": "^20.2.0",
+    "express": "^5.3.0",
+    "google-auth-library": "^11.3.4",
+    "luxon": "^3.7.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/luxon": "^3.7.6",
+    "@types/node": "^22.20.7",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
