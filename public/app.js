@@ -111,7 +111,7 @@ function blockPicker(selected) {
     <div class="chips" role="group" aria-labelledby="l-blocks">
       ${names.map((n) => `<label class="chip"><input type="checkbox" name="blocks" value="${esc(n)}" ${selected.includes(n) ? "checked" : ""}><span>${esc(n)}</span></label>`).join("")}
     </div>
-    <p class="hint">Pick the blocks of hours it may go in. With none picked it can go anywhere in your hours, named or not.</p>`;
+    <p class="hint">Pick the blocks of hours it may go in. With none picked it can go anywhere in your hours, except blocks set to take only work that picks them.</p>`;
 }
 
 // ---- Plan ------------------------------------------------------------------
@@ -426,12 +426,13 @@ function rangesHtml(scope, key, list) {
       <input type="time" data-f="end" value="${esc(r.end)}" aria-label="Until">
       <input type="text" data-f="name" value="${esc(r.name ?? "")}" placeholder="Name, e.g. focus (optional)" list="names-h" autocapitalize="none" autocomplete="off" aria-label="Block name">
       <button class="x" data-h="remove" aria-label="Remove these hours">×</button>
+      ${r.name ? `<label class="check strict"><input type="checkbox" data-f="strict" ${r.strict ? "checked" : ""}>Only for work that picks ${esc(r.name)}</label>` : ""}
     </div>`).join("");
 }
 
 function hoursView() {
   const h = (hoursDraft ??= cloneHours());
-  let html = `<h1>Hours</h1><p class="sub">When work may be planned. Give a block of hours a name, like focus, home or review, and each task or habit can then be limited to the blocks you pick for it.</p>
+  let html = `<h1>Hours</h1><p class="sub">When work may be planned. Give a block of hours a name, like focus, home or review, and each task or habit can then be limited to the blocks you pick for it. A named block can also be kept only for the work that picks it.</p>
     <datalist id="names-h">${blockNames().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>`;
   for (let d = 1; d <= 7; d++) {
     html += `<div class="hday"><header><b>${DAYS[d]}</b><button class="link" data-h="add" data-scope="weekly" data-key="${d}">Add hours</button></header>
@@ -462,7 +463,7 @@ function hoursClick(el) {
     const start = last ? last.end : "09:00";
     const [hh, mm] = start.split(":").map(Number);
     const end = `${String(Math.min(23, hh + 3)).padStart(2, "0")}:${hh + 3 > 23 ? "59" : String(mm).padStart(2, "0")}`;
-    list.push({ start, end, name: null });
+    list.push({ start, end, name: null, strict: false });
   } else if (what === "remove") {
     h[row.dataset.scope][row.dataset.key].splice(Number(row.dataset.i), 1);
   } else if (what === "copy") {
@@ -607,7 +608,12 @@ view.addEventListener("change", (e) => {
   const row = e.target.closest(".range[data-scope]");
   if (!row || !hoursDraft) return;
   const r = hoursDraft[row.dataset.scope][row.dataset.key][Number(row.dataset.i)];
-  r[e.target.dataset.f] = e.target.dataset.f === "name" ? e.target.value.replace(/,/g, " ").trim().toLowerCase() || null : e.target.value;
+  const field = e.target.dataset.f;
+  if (field === "strict") r.strict = e.target.checked;
+  else if (field === "name") {
+    r.name = e.target.value.replace(/,/g, " ").trim().toLowerCase() || null;
+    if (!r.name) r.strict = false; // a block with no name can't be picked, so it can't be reserved
+  } else r[field] = e.target.value;
   render(true);
 });
 view.addEventListener("submit", (e) => {

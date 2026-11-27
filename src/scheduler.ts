@@ -35,6 +35,8 @@ export interface Window {
   end: number;
   /** The block's name (e.g. "focus"), or null when it has none. */
   name: string | null;
+  /** A strict block is reserved: it takes only tasks that list its name. */
+  strict?: boolean;
   /** Local calendar date of the window ("YYYY-MM-DD"). Needed only for per-day caps. */
   day?: string;
 }
@@ -114,14 +116,14 @@ export function subtract(base: Interval, cuts: Interval[]): Interval[] {
 }
 
 /**
- * A task fits a window when it has no list of allowed blocks, or when the
- * window's name is on its list. A window with no name takes only tasks that
- * can go anywhere.
+ * A task that lists blocks fits only windows whose name is on its list. A
+ * task that lists none fits any window except a strict one, which is reserved
+ * for tasks that name it.
  */
-export function fits(task: SchedTask, w: { name: string | null }): boolean {
+export function fits(task: SchedTask, w: { name: string | null; strict?: boolean }): boolean {
   const allowed = normBlocks(task.blocks);
-  if (allowed.length === 0) return true;
   const name = normName(w.name);
+  if (allowed.length === 0) return !(w.strict && name !== null);
   return name !== null && allowed.includes(name);
 }
 
@@ -162,7 +164,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
       for (const p of subtract(clipped, input.busy)) {
         const start = ceilTo(p.start, gran);
         const end = floorTo(p.end, gran);
-        if (end > start) slots.push({ start, end, name: w.name, day: w.day });
+        if (end > start) slots.push({ start, end, name: w.name, strict: w.strict, day: w.day });
       }
     }
     return slots.sort((a, b) => a.start - b.start);
@@ -202,7 +204,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         remaining -= chunk;
         used[day] = (used[day] ?? 0) + chunk;
         // Keep whatever is left of the slot on either side of the new block.
-        const after = { start: Math.min(slot.end, end + buffer), end: slot.end, name: slot.name, day: slot.day };
+        const after = { start: Math.min(slot.end, end + buffer), end: slot.end, name: slot.name, strict: slot.strict, day: slot.day };
         if (start > slot.start) {
           slot.end = start;
           slots.splice(i + 1, 0, after);

@@ -18,9 +18,11 @@ Each block of hours can be given a name, such as `focus`, `home` or `review`. A 
 
 - Picked `focus`: only planned into focus blocks.
 - Picked `focus` and `home`: planned into either, whichever comes first.
-- Nothing picked: planned anywhere in your hours, named or not.
+- Nothing picked: planned anywhere in your hours, except strict blocks.
 
-A block with no name takes only work that has nothing picked. So to keep a block for particular work, such as an end-of-day review hour, name it and pick that name on the work that belongs there; everything else needs at least one other block picked to stay out of it.
+A named block has a switch, **Only for work that picks it**. With it on, the block is strict: work with nothing picked stays out, and only tasks and habits that pick the block's name are planned into it. Use it to keep a block for particular work, such as an end-of-day review hour, without having to pick blocks on everything else.
+
+A block with no name takes only work that has nothing picked, and cannot be strict.
 
 Names are yours to choose. They can describe a place, a kind of attention or a time of day.
 

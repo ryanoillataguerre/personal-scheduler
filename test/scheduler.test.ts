@@ -416,6 +416,39 @@ test("a task can be allowed in several named blocks, and takes the earliest of t
   assert.deepEqual(r.unscheduled, [{ taskId: 4, minutes: 60 }]);
 });
 
+test("a strict block is reserved for work that picks it", () => {
+  const review = (strict: boolean): Window => ({ ...win("2026-11-30T17:00", "2026-11-30T18:00", "review"), strict });
+  const tasks = [
+    task(1, { priority: 1, remainingMin: 60 }), // nothing picked
+    task(2, { priority: 2, remainingMin: 15, blocks: ["review"] }),
+    task(3, { priority: 3, remainingMin: 30, blocks: ["home", "review"] }),
+  ];
+  // Not strict: the unassigned task takes the review hour and crowds the others out.
+  const open = schedule({ now: at("2026-11-30T08:00"), tasks, windows: [review(false)], busy: [] });
+  assert.deepEqual(show(open), ["1@Mon 17:00-18:00"]);
+  // Strict: only the two that picked review get in.
+  const strict = schedule({ now: at("2026-11-30T08:00"), tasks, windows: [review(true)], busy: [] });
+  assert.deepEqual(show(strict), ["2@Mon 17:00-17:15", "3@Mon 17:15-17:45"]);
+  assert.deepEqual(strict.unscheduled, [{ taskId: 1, minutes: 60 }]);
+});
+
+test("strict is kept only on named blocks when hours are saved", () => {
+  const h = parseHours({
+    weekly: {
+      "1": [
+        { start: "17:00", end: "18:00", name: "Review", strict: true },
+        { start: "10:00", end: "12:00", strict: true }, // no name: nothing could ever pick it
+      ],
+    },
+  });
+  assert.deepEqual(h.weekly["1"], [
+    { start: "17:00", end: "18:00", name: "review", strict: true },
+    { start: "10:00", end: "12:00", name: null, strict: false },
+  ]);
+  const w = expandWindows(h, at("2026-11-30T08:00"), ZONE, 1);
+  assert.deepEqual(w.map((x) => [x.name, x.strict]), [["review", true], [null, false]]);
+});
+
 test("block lists are normalized from arrays and from the stored comma form", () => {
   assert.deepEqual(normBlocks([" Focus", "home", "focus", ""]), ["focus", "home"]);
   assert.deepEqual(normBlocks("home,focus"), ["focus", "home"]);

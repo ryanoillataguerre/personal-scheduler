@@ -56,8 +56,8 @@ test("upgrades location to block names without losing anything", async () => {
   const habit = dbm.db.prepare("SELECT blocks FROM habits").get() as { blocks: string };
   assert.equal(habit.blocks, "review");
   assert.deepEqual(dbm.getHours().weekly["1"], [
-    { start: "10:00", end: "17:00", name: "home" },
-    { start: "17:00", end: "18:00", name: "review" },
+    { start: "10:00", end: "17:00", name: "home", strict: false },
+    { start: "17:00", end: "18:00", name: "review", strict: false },
   ]);
 
   // And it still plans the same way: the habit is held for the review hour.
