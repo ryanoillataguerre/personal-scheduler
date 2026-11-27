@@ -77,6 +77,19 @@ function dur(min) {
   return m ? `${h} h ${m} min` : `${h} h`;
 }
 const when = (ms) => `${dayName(ms)[0]} ${time(ms)}`;
+
+/** Wording for a task's deadline, and whether it needs attention. */
+function dueInfo(t) {
+  if (!t.dueDate) return null;
+  const today = dayKey(S.now);
+  const date = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(t.dueDate + "T12:00:00Z"));
+  const open = t.status === "open";
+  if (open && t.dueDate < today) return { text: `Overdue, was due ${date}`, warn: true };
+  const label = t.dueDate === today ? "Due today" : t.dueDate === dayKey(S.now + 86400000) ? "Due tomorrow" : `Due ${date}`;
+  if (open && S.plan.late.includes(t.id)) return { text: `${label}, won't be finished in time`, warn: true };
+  if (open && S.plan.urgent.includes(t.id)) return { text: `${label}, moved to the front`, warn: false };
+  return { text: label, warn: false };
+}
 const taskById = () => Object.fromEntries(S.tasks.map((t) => [t.id, t]));
 const places = () =>
   [...new Set([
@@ -99,6 +112,10 @@ function notices() {
     const names = un.map((u) => `${esc(tasks[u.taskId].title)} (${dur(u.minutes)})`).join(", ");
     out.push(`No room in the next ${S.settings.horizonDays} days for: ${names}. Add hours, tag hours with the place it needs, or shorten its minimum piece.`);
   }
+  const late = S.plan.late.map((id) => tasks[id]).filter((t) => t && t.status === "open");
+  if (late.length) {
+    out.push(`Won't be finished by the deadline: ${late.map((t) => `${esc(t.title)} (${esc(dueInfo(t).text.split(",")[0].toLowerCase())})`).join(", ")}. It's planned first; free up hours or move the deadline.`);
+  }
   return out.map((n) => `<p class="notice">${n}</p>`).join("");
 }
 
@@ -109,6 +126,7 @@ function blockHtml(b, t) {
   const mins = (b.end - b.start) / 60000;
   const state = b.status === "done" ? "done" : live ? "now" : ask ? "ask" : "";
   const meta = [dur(mins), t.location].filter(Boolean).join(", ");
+  const due = b.status === "planned" ? dueInfo(t) : null;
   let actions = "";
   if (b.status === "planned" && open) {
     actions = live
@@ -123,7 +141,8 @@ function blockHtml(b, t) {
     <div class="time"><b>${time(b.start)}</b><span>${time(b.end)}</span></div>
     <div class="body" ${b.status === "planned" && !live && !ask ? 'role="button" tabindex="0"' : ""}>
       <div class="title">${esc(t.title)}</div>
-      <div class="meta">${lead}${esc(meta)}</div>${actions}
+      <div class="meta">${lead}${esc(meta)}</div>
+      ${due ? `<div class="meta ${due.warn ? "warn" : ""}">${esc(due.text)}</div>` : ""}${actions}
     </div>
   </div>`;
 }
@@ -179,6 +198,7 @@ function tasksView() {
       <span class="pri" aria-label="Priority ${t.priority}, ${PRIORITY[t.priority]}">${t.priority}</span>
       <span><span class="title">${esc(t.title)}</span>
         <span class="meta">${esc(meta)}</span>
+        ${dueInfo(t) ? `<span class="meta ${dueInfo(t).warn ? "warn" : ""}">${esc(dueInfo(t).text)}</span>` : ""}
         <span class="meta">${next[t.id] ? "Next: " + esc(when(next[t.id])) : "No room in your hours yet"}</span>
         ${t.doneMin ? `<span class="bar"><i style="width:${Math.min(100, (t.doneMin / t.durationMin) * 100)}%"></i></span>` : ""}</span>
     </button>`;
@@ -195,7 +215,7 @@ function tasksView() {
 
 function taskSheet(t) {
   const isNew = !t;
-  t = t || { title: "", priority: 2, durationMin: 60, minChunkMin: 30, location: "", notes: "" };
+  t = t || { title: "", priority: 2, durationMin: 60, minChunkMin: 30, location: "", notes: "", dueDate: null };
   sheet.innerHTML = `<form method="dialog">
     <h2>${isNew ? "New task" : "Edit task"}</h2>
     <label for="f-title">What needs doing</label>
@@ -211,6 +231,9 @@ function taskSheet(t) {
         <div class="unit"><input id="f-chunk" name="minChunkMin" type="number" inputmode="numeric" min="5" max="6000" step="5" value="${t.minChunkMin}" required><span>min</span></div></div>
     </div>
     <p class="hint">The task can be split across open time, but never into pieces shorter than the smallest piece. Set both the same to keep it in one sitting.</p>
+    <label for="f-due">Deadline</label>
+    <input id="f-due" name="dueDate" type="date" value="${esc(t.dueDate ?? "")}">
+    <p class="hint">Optional. Done by the end of this day. If it's running out of time, it's planned ahead of everything else, whatever its priority.</p>
     <label for="f-loc">Where it has to happen</label>
     <input id="f-loc" name="location" type="text" value="${esc(t.location ?? "")}" list="places" placeholder="Anywhere" autocapitalize="none" autocomplete="off">
     <datalist id="places">${places().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
@@ -239,6 +262,7 @@ function taskSheet(t) {
       minChunkMin: Number(f.get("minChunkMin")),
       location: f.get("location"),
       notes: f.get("notes"),
+      dueDate: f.get("dueDate") || null,
     };
     let ok;
     if (what === "delete") ok = confirm(`Delete "${t.title}"?`) && (await act("DELETE", `/api/tasks/${t.id}`, null, "Deleted"));
@@ -482,6 +506,9 @@ function settingsView() {
         <div><label for="s-buf">Gap between blocks</label><div class="unit"><input id="s-buf" name="bufferMin" type="number" inputmode="numeric" min="0" max="120" step="5" value="${s.bufferMin}"><span>min</span></div></div>
         <div><label for="s-days">Plan ahead</label><div class="unit"><input id="s-days" name="horizonDays" type="number" inputmode="numeric" min="1" max="60" value="${s.horizonDays}"><span>days</span></div></div>
       </div>
+      <label for="s-cushion">Finish deadline work early by</label>
+      <div class="unit"><input id="s-cushion" name="deadlineCushionHours" type="number" inputmode="numeric" min="0" max="336" value="${s.deadlineCushionHours}"><span>h</span></div>
+      <p class="hint">A task with a deadline is planned to finish this long before it's due. When that's at risk, it moves ahead of everything else. Set 0 to cut it as close as the deadline itself.</p>
       <label for="s-alert">Phone alert for each block</label>
       <select id="s-alert" name="reminderMin">${alerts.map(([v, l]) => `<option value="${v ?? ""}" ${s.reminderMin === v ? "selected" : ""}>${l}</option>`).join("")}</select>
       <label for="s-zone">Time zone</label>
@@ -503,6 +530,7 @@ function saveSettings(form) {
     graceMin: Number(f.get("graceMin")),
     bufferMin: Number(f.get("bufferMin")),
     horizonDays: Number(f.get("horizonDays")),
+    deadlineCushionHours: Number(f.get("deadlineCushionHours")),
     reminderMin: f.get("reminderMin") === "" ? null : Number(f.get("reminderMin")),
     zone: String(f.get("zone")).trim(),
   };

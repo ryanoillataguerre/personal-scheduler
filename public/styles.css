@@ -128,6 +128,7 @@ button { cursor: pointer; }
 .task .meta { font-size: 0.875rem; color: var(--muted); }
 .task .meta { display: block; }
 .task.paused { opacity: 0.6; }
+.meta.warn, .block:not(.now) .warn { color: var(--p1); font-weight: 600; }
 .task.finished .title { font-weight: 400; color: var(--muted); text-decoration: line-through; }
 .task.finished .pri { background: var(--line); color: var(--muted); }
 .bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: 0.4rem; overflow: hidden; }
