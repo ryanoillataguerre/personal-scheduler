@@ -7,5 +7,10 @@ services:
       # Only this machine can reach the port directly. Tailscale Serve (see the
       # README) is what makes it reachable from your phone.
       - "127.0.0.1:8787:8787"
+    environment:
+      BACKUP_DIR: /backups
     volumes:
+      # Both are plain folders next to this file, not Docker-managed volumes,
+      # so removing or rebuilding the container never touches them.
       - ./data:/data
+      - ./backups:/backups

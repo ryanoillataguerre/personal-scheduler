@@ -489,7 +489,12 @@ function settingsView() {
     </div>
     <button class="btn wide">Save settings</button>
     </form>
-    <p style="margin-top:.75rem"><button class="btn ghost wide" data-s="replan" type="button">Replan now</button></p>`;
+    <p style="margin-top:.75rem"><button class="btn ghost wide" data-s="replan" type="button">Replan now</button></p>
+    <h2>Backups</h2><div class="card">
+      <p>${S.backup.last ? `Last backup ${esc(when(S.backup.last.at))}.` : "No backup yet."} A full copy of your data is saved every 24 hours, and the newest ${S.backup.keep} are kept.</p>
+      <p class="small muted">Saved on the server in ${S.backup.dir === "/backups" ? "the <code>backups</code> folder next to <code>docker-compose.yml</code>" : `<code>${esc(S.backup.dir)}</code>`}. Each copy includes your Google sign-in, so keep them private.</p>
+      <button class="btn ghost" data-s="backup" type="button">Back up now</button>
+    </div>`;
 }
 
 function saveSettings(form) {
@@ -549,6 +554,7 @@ view.addEventListener("click", (e) => {
   if (el.dataset.h) return hoursClick(el);
   if (el.dataset.s === "replan") return act("POST", "/api/replan", null, "Plan updated");
   if (el.dataset.s === "disconnect") return confirm("Disconnect Google Calendar? Events already on the calendar stay there.") && act("POST", "/api/google/disconnect", null, "Disconnected");
+  if (el.dataset.s === "backup") return act("POST", "/api/backup", null, "Backed up");
   const id = Number(el.closest(".block").dataset.block);
   openBlock = openBlock === id ? null : id;
   render(true);

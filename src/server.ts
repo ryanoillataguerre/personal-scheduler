@@ -1,6 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { backupIfDue, backupNow, backupStatus } from "./backup.js";
 import { DateTime, IANAZone } from "luxon";
 import { db, getHours, getSettings, saveHours, saveSettings, type BlockRow, type HabitRow, type Settings, type TaskRow } from "./db.js";
 import {
@@ -151,6 +152,7 @@ async function state() {
       calendars,
       redirectUri: redirectUri(),
     },
+    backup: backupStatus(),
   };
 }
 
@@ -255,6 +257,14 @@ app.post(
   change(() => disconnect()),
 );
 
+app.post(
+  "/api/backup",
+  route(async (_req, res) => {
+    backupNow();
+    res.json(await state());
+  }),
+);
+
 app.get("/oauth/start", (_req, res) => {
   if (!googleConfigured()) {
     res.status(400).send("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env, then restart.");
@@ -289,6 +299,19 @@ app.listen(PORT, HOST, () => {
   console.log(`Dayloop is running on http://${HOST}:${PORT}`);
   replan().catch((e) => console.error("Initial plan failed:", e));
 });
+
+// Keep a daily copy of the database. Checked on startup and every hour, so a
+// machine that was off at the usual time catches up when it comes back.
+const backupTick = () => {
+  try {
+    const made = backupIfDue();
+    if (made) console.log(`Backed up to ${made.file}`);
+  } catch (e) {
+    console.error("Backup failed:", e);
+  }
+};
+backupTick();
+setInterval(backupTick, 60 * 60_000);
 
 // The heartbeat: pick up new calendar events and sweep missed blocks.
 setInterval(() => replan().catch((e) => console.error("Replan failed:", e)), TICK_MIN * 60_000);
