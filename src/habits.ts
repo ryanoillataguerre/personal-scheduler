@@ -6,7 +6,7 @@
 import { DateTime } from "luxon";
 import { db, removeBlock, tx, type BlockRow, type HabitKind, type HabitRow, type Settings, type TaskRow } from "./db.js";
 import { deleteTask, finishTask, touchTask, UserError } from "./planner.js";
-import { normLoc } from "./scheduler.js";
+import { normBlocks } from "./scheduler.js";
 
 const MIN = 60_000;
 
@@ -70,13 +70,13 @@ export function syncHabits(now: number, s: Settings): void {
   const habits = db.prepare("SELECT * FROM habits WHERE active = 1").all() as HabitRow[];
   const find = db.prepare("SELECT * FROM tasks WHERE habit_id = ? AND period_start = ?");
   const insert = db.prepare(
-    `INSERT INTO tasks (title, priority, duration_min, min_chunk_min, max_chunk_min, max_per_day_min, location,
+    `INSERT INTO tasks (title, priority, duration_min, min_chunk_min, max_chunk_min, max_per_day_min, blocks,
                         created_at, habit_id, period_start, period_end)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const update = db.prepare(
     `UPDATE tasks SET title = ?, priority = ?, duration_min = ?, min_chunk_min = ?, max_chunk_min = ?,
-                      max_per_day_min = ?, location = ? WHERE id = ?`,
+                      max_per_day_min = ?, blocks = ? WHERE id = ?`,
   );
 
   for (const h of habits) {
@@ -87,7 +87,7 @@ export function syncHabits(now: number, s: Settings): void {
       const row = find.get(h.id, period.start) as TaskRow | undefined;
       if (!row) {
         if (target > 0) {
-          insert.run(h.title, h.priority, target, c.minChunk, c.maxChunk, c.maxPerDay, h.location, h.created_at, h.id, period.start, period.end);
+          insert.run(h.title, h.priority, target, c.minChunk, c.maxChunk, c.maxPerDay, h.blocks, h.created_at, h.id, period.start, period.end);
         }
         continue;
       }
@@ -96,8 +96,8 @@ export function syncHabits(now: number, s: Settings): void {
         retire(row, now);
         continue;
       }
-      update.run(h.title, h.priority, target, c.minChunk, c.maxChunk, c.maxPerDay, h.location, row.id);
-      if (row.title !== h.title || row.location !== h.location || row.priority !== h.priority) touchTask(row.id);
+      update.run(h.title, h.priority, target, c.minChunk, c.maxChunk, c.maxPerDay, h.blocks, row.id);
+      if (row.title !== h.title || row.priority !== h.priority) touchTask(row.id);
       if (row.done_min >= target) finishTask(row.id, now);
     }
   }
@@ -124,7 +124,8 @@ export interface HabitInput {
   weeklyMin: number;
   minChunkMin: number;
   maxPerDayMin: number | null;
-  location: string | null;
+  /** Named blocks of hours it may go in. Empty for any. */
+  blocks: string[];
 }
 
 function int(v: unknown, name: string, min: number, max: number): number {
@@ -153,17 +154,17 @@ export function parseHabit(body: Record<string, unknown>, existing?: HabitRow): 
     if (maxPerDayMin < minChunkMin) throw new UserError("Most in one day can't be less than the smallest piece.");
     if (maxPerDayMin * 7 < weeklyMin) throw new UserError("That daily limit can't reach the weekly total in seven days.");
   }
-  const location = normLoc((body.location === undefined ? existing?.location : body.location) as string | null);
-  return { title, kind, priority, sessionMin, daysPerWeek, weeklyMin, minChunkMin, maxPerDayMin, location };
+  const blocks = normBlocks(body.blocks === undefined ? existing?.blocks : body.blocks);
+  return { title, kind, priority, sessionMin, daysPerWeek, weeklyMin, minChunkMin, maxPerDayMin, blocks };
 }
 
 export function createHabit(h: HabitInput, now = Date.now()): number {
   const r = db
     .prepare(
       `INSERT INTO habits (title, kind, priority, session_min, days_per_week, weekly_min, min_chunk_min,
-                           max_per_day_min, location, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                           max_per_day_min, blocks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(h.title, h.kind, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin, h.location, now);
+    .run(h.title, h.kind, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin, h.blocks.join(",") || null, now);
   return Number(r.lastInsertRowid);
 }
 
@@ -172,8 +173,8 @@ export const getHabit = (id: number) => db.prepare("SELECT * FROM habits WHERE i
 export function updateHabit(id: number, h: HabitInput): void {
   db.prepare(
     `UPDATE habits SET title = ?, priority = ?, session_min = ?, days_per_week = ?, weekly_min = ?,
-                       min_chunk_min = ?, max_per_day_min = ?, location = ? WHERE id = ?`,
-  ).run(h.title, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin, h.location, id);
+                       min_chunk_min = ?, max_per_day_min = ?, blocks = ? WHERE id = ?`,
+  ).run(h.title, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin, h.blocks.join(",") || null, id);
 }
 
 /** Take a habit's unfinished occurrences off the plan. */

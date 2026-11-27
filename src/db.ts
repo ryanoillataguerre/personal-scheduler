@@ -3,7 +3,7 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { DEFAULT_HOURS, type Hours } from "./hours.js";
+import { DEFAULT_HOURS, upgradeHours, type Hours } from "./hours.js";
 
 export interface TaskRow {
   id: number;
@@ -12,7 +12,8 @@ export interface TaskRow {
   duration_min: number;
   done_min: number;
   min_chunk_min: number;
-  location: string | null;
+  /** Named blocks of hours the task may go in, comma-separated. Null for any. */
+  blocks: string | null;
   notes: string;
   /** "lapsed": a habit occurrence whose day or week ended before it was done. */
   status: "open" | "done" | "lapsed";
@@ -49,7 +50,8 @@ export interface HabitRow {
   min_chunk_min: number;
   /** Most in one day, for hours. Null for no limit. */
   max_per_day_min: number | null;
-  location: string | null;
+  /** Named blocks of hours the habit may go in, comma-separated. Null for any. */
+  blocks: string | null;
   active: number;
   created_at: number;
 }
@@ -141,7 +143,7 @@ db.exec(`
     duration_min INTEGER NOT NULL,
     done_min INTEGER NOT NULL DEFAULT 0,
     min_chunk_min INTEGER NOT NULL,
-    location TEXT,
+    blocks TEXT,
     notes TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'open',
     missed_count INTEGER NOT NULL DEFAULT 0,
@@ -169,13 +171,21 @@ db.exec(`
     weekly_min INTEGER NOT NULL DEFAULT 300,
     min_chunk_min INTEGER NOT NULL DEFAULT 30,
     max_per_day_min INTEGER,
-    location TEXT,
+    blocks TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS pending_deletes (event_id TEXT PRIMARY KEY);
   CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `);
+
+// Earlier versions gave a task one "location". It is now a list of the named
+// blocks of hours the task may go in, stored comma-separated, so an old single
+// value reads as a list of one.
+for (const table of ["tasks", "habits"]) {
+  const cols = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
+  if (cols.has("location") && !cols.has("blocks")) db.exec(`ALTER TABLE ${table} RENAME COLUMN location TO blocks`);
+}
 
 // Columns added after the first release. Existing databases gain them here.
 const taskColumns = new Set((db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[]).map((c) => c.name));
@@ -207,7 +217,7 @@ export const delKv = (key: string) => void kvDel.run(key);
 
 export const getSettings = (): Settings => ({ ...DEFAULT_SETTINGS, ...getKv<Partial<Settings>>("settings", {}) });
 export const saveSettings = (s: Settings) => setKv("settings", s);
-export const getHours = (): Hours => getKv<Hours>("hours", DEFAULT_HOURS);
+export const getHours = (): Hours => upgradeHours(getKv<Hours>("hours", DEFAULT_HOURS));
 export const saveHours = (h: Hours) => setKv("hours", h);
 
 /** Forget a block's calendar event; the sync step deletes it from Google later. */

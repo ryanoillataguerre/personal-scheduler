@@ -7,10 +7,22 @@ Each task has:
 - a priority from 1 (critical) to 4 (low)
 - a total length
 - a smallest piece, the shortest block it may be split into
-- optionally a place it has to happen
+- optionally the named blocks of hours it may go in
 - optionally a deadline: a date it must be done by the end of
 
-You set working hours per weekday, with one-off changes for single dates, and can tag each stretch of hours with a place. A task that needs a place is only planned into hours tagged with that place. Hours with no tag take only tasks that need no place.
+You set working hours per weekday, with one-off changes for single dates.
+
+## Named blocks
+
+Each block of hours can be given a name, such as `focus`, `home` or `review`. A task or habit can then be limited to the blocks you pick for it, any number of them:
+
+- Picked `focus`: only planned into focus blocks.
+- Picked `focus` and `home`: planned into either, whichever comes first.
+- Nothing picked: planned anywhere in your hours, named or not.
+
+A block with no name takes only work that has nothing picked. So to keep a block for particular work, such as an end-of-day review hour, name it and pick that name on the work that belongs there; everything else needs at least one other block picked to stay out of it.
+
+Names are yours to choose. They can describe a place, a kind of attention or a time of day.
 
 ## Deadlines
 

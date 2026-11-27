@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DateTime } from "luxon";
-import { schedule, chunkFor, subtract, type SchedTask, type Window } from "../src/scheduler.js";
+import { schedule, chunkFor, normBlocks, subtract, type SchedTask, type Window } from "../src/scheduler.js";
 import { expandWindows, parseHours, type Hours } from "../src/hours.js";
 
 const ZONE = "America/Los_Angeles";
@@ -12,14 +12,14 @@ const task = (id: number, o: Partial<SchedTask> = {}): SchedTask => ({
   priority: 2,
   remainingMin: 60,
   minChunkMin: 30,
-  location: null,
+  blocks: null,
   createdAt: id,
   ...o,
 });
-const win = (start: string, end: string, location: string | null = null): Window => ({
+const win = (start: string, end: string, name: string | null = null): Window => ({
   start: at(start),
   end: at(end),
-  location,
+  name,
   day: start.slice(0, 10),
 });
 const show = (r: ReturnType<typeof schedule>) =>
@@ -90,10 +90,10 @@ test("a lower priority task fills a gap the higher one could not use", () => {
   assert.deepEqual(show(r), ["2@Mon 09:00-09:30", "1@Mon 10:30-12:30"]);
 });
 
-test("a task with a location only lands in windows tagged with it", () => {
+test("a task limited to a named block only lands in blocks with that name", () => {
   const r = schedule({
     now: at("2026-11-30T08:00"),
-    tasks: [task(1, { priority: 1, location: "Office" }), task(2, { priority: 2 })],
+    tasks: [task(1, { priority: 1, blocks: ["Office"] }), task(2, { priority: 2 })],
     windows: [
       win("2026-11-30T09:00", "2026-11-30T12:00", "home"),
       win("2026-11-30T13:00", "2026-11-30T17:00", "office"),
@@ -103,10 +103,10 @@ test("a task with a location only lands in windows tagged with it", () => {
   assert.deepEqual(show(r), ["2@Mon 09:00-10:00", "1@Mon 13:00-14:00"]);
 });
 
-test("untagged windows do not take location-bound tasks", () => {
+test("blocks with no name do not take tasks limited to named blocks", () => {
   const r = schedule({
     now: at("2026-11-30T08:00"),
-    tasks: [task(1, { location: "gym" })],
+    tasks: [task(1, { blocks: ["gym"] })],
     windows: [win("2026-11-30T09:00", "2026-11-30T12:00")],
     busy: [],
   });
@@ -385,12 +385,42 @@ test("a deadline respects where the task has to happen", () => {
   // Only Tuesday has office hours, and that is after the deadline.
   const r = schedule({
     now: at("2026-11-30T08:00"),
-    tasks: [task(1, { remainingMin: 60, location: "office", dueBy: at("2026-12-01T00:00") })],
+    tasks: [task(1, { remainingMin: 60, blocks: ["office"], dueBy: at("2026-12-01T00:00") })],
     windows: [win("2026-11-30T09:00", "2026-11-30T12:00", "home"), win("2026-12-01T09:00", "2026-12-01T12:00", "office")],
     busy: [],
   });
   assert.deepEqual(show(r), ["1@Tue 09:00-10:00"]);
   assert.deepEqual(r.late, [1]);
+});
+
+test("a task can be allowed in several named blocks, and takes the earliest of them", () => {
+  const windows = [
+    win("2026-11-30T09:00", "2026-11-30T10:00", "focus"),
+    win("2026-11-30T10:00", "2026-11-30T12:00", "home"),
+    win("2026-11-30T17:00", "2026-11-30T18:00", "review"),
+  ];
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { priority: 1, remainingMin: 60, blocks: ["review"] }),
+      task(2, { priority: 2, remainingMin: 120, minChunkMin: 60, blocks: ["focus", "home"] }),
+      task(3, { priority: 3, remainingMin: 60, blocks: ["Home", " REVIEW "] }),
+      task(4, { priority: 4, remainingMin: 60, blocks: [] }),
+    ],
+    windows,
+    busy: [],
+  });
+  // 1 is held for review. 2 spans focus and home. 3 takes what is left of home.
+  // 4 can go anywhere, but nothing is left today.
+  assert.deepEqual(show(r), ["2@Mon 09:00-10:00", "2@Mon 10:00-11:00", "3@Mon 11:00-12:00", "1@Mon 17:00-18:00"]);
+  assert.deepEqual(r.unscheduled, [{ taskId: 4, minutes: 60 }]);
+});
+
+test("block lists are normalized from arrays and from the stored comma form", () => {
+  assert.deepEqual(normBlocks([" Focus", "home", "focus", ""]), ["focus", "home"]);
+  assert.deepEqual(normBlocks("home,focus"), ["focus", "home"]);
+  assert.deepEqual(normBlocks("office"), ["office"]); // a single value saved by an earlier version
+  assert.deepEqual(normBlocks(null), []);
 });
 
 test("subtract cuts intervals", () => {
@@ -402,12 +432,13 @@ test("subtract cuts intervals", () => {
 
 test("hours expand per weekday, with date overrides and DST handled", () => {
   const hours: Hours = parseHours({
+    // Monday uses the old "location" key, which hours saved by earlier versions still have.
     weekly: { "1": [{ start: "09:00", end: "12:00", location: "Home" }], "7": [{ start: "10:00", end: "11:00" }] },
-    overrides: { "2026-12-01": [{ start: "18:00", end: "20:00", location: "office" }], "2026-12-07": [] },
+    overrides: { "2026-12-01": [{ start: "18:00", end: "20:00", name: "Office" }], "2026-12-07": [] },
   });
   const w = expandWindows(hours, at("2026-11-30T08:00"), ZONE, 8);
   assert.deepEqual(
-    w.map((x) => `${hm(x.start)}-${hm(x.end).slice(4)} ${x.location}`),
+    w.map((x) => `${hm(x.start)}-${hm(x.end).slice(4)} ${x.name}`),
     ["Mon 09:00-12:00 home", "Tue 18:00-20:00 office", "Sun 10:00-11:00 null"],
   );
   // Spring-forward Sunday 2027-03-14: 10:00 local is still 10:00 local.

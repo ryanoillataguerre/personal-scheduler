@@ -23,13 +23,13 @@ before(async () => {
   planner = await import("../src/planner.js");
   habits = await import("../src/habits.js");
   const day = [
-    { start: "09:00", end: "12:00", location: null },
-    { start: "19:00", end: "21:00", location: null },
+    { start: "09:00", end: "12:00", name: null },
+    { start: "19:00", end: "21:00", name: null },
   ];
   dbm.saveHours({ weekly: { "1": day, "2": day, "3": day, "4": day, "5": day, "6": day, "7": day }, overrides: {} });
 });
 
-const base = { priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, location: null };
+const base = { priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [] as string[] };
 const blocks = (habitId: number, status?: string) =>
   (
     dbm.db
