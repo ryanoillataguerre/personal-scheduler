@@ -91,13 +91,28 @@ function dueInfo(t) {
   return { text: label, warn: false };
 }
 const taskById = () => Object.fromEntries(S.tasks.map((t) => [t.id, t]));
-const places = () =>
+/** Names given to blocks of hours on the Hours tab. */
+const blockNames = () =>
   [...new Set([
-    ...S.tasks.map((t) => t.location),
-    ...S.habits.map((h) => h.location),
-    ...Object.values(S.hours.weekly).flat().map((r) => r.location),
-    ...Object.values(S.hours.overrides).flat().map((r) => r.location),
+    ...Object.values(S.hours.weekly).flat().map((r) => r.name),
+    ...Object.values(S.hours.overrides).flat().map((r) => r.name),
   ].filter(Boolean))].sort();
+const blocksText = (list) => (list.length ? `in ${list.join(" or ")}` : "");
+
+/** Checkboxes for the named blocks a task or habit may go in. */
+function blockPicker(selected) {
+  // Keep names the item already has, even if no hours carry them any more.
+  const names = [...new Set([...blockNames(), ...selected])].sort();
+  if (!names.length) {
+    return `<span class="label">When it can be done</span>
+      <p class="hint" style="margin:0">Any time in your hours. To limit it, name some blocks on the Hours tab (focus, home, review) and pick them here.</p>`;
+  }
+  return `<span class="label" id="l-blocks">When it can be done</span>
+    <div class="chips" role="group" aria-labelledby="l-blocks">
+      ${names.map((n) => `<label class="chip"><input type="checkbox" name="blocks" value="${esc(n)}" ${selected.includes(n) ? "checked" : ""}><span>${esc(n)}</span></label>`).join("")}
+    </div>
+    <p class="hint">Pick the blocks of hours it may go in. With none picked it can go anywhere in your hours, except blocks set to take only work that picks them.</p>`;
+}
 
 // ---- Plan ------------------------------------------------------------------
 
@@ -110,7 +125,7 @@ function notices() {
   const un = S.plan.unscheduled.filter((u) => tasks[u.taskId] && !tasks[u.taskId].habitId);
   if (un.length) {
     const names = un.map((u) => `${esc(tasks[u.taskId].title)} (${dur(u.minutes)})`).join(", ");
-    out.push(`No room in the next ${S.settings.horizonDays} days for: ${names}. Add hours, tag hours with the place it needs, or shorten its minimum piece.`);
+    out.push(`No room in the next ${S.settings.horizonDays} days for: ${names}. Add hours, allow it in more blocks, or shorten its smallest piece.`);
   }
   const late = S.plan.late.map((id) => tasks[id]).filter((t) => t && t.status === "open");
   if (late.length) {
@@ -125,7 +140,7 @@ function blockHtml(b, t) {
   const open = live || ask || openBlock === b.id;
   const mins = (b.end - b.start) / 60000;
   const state = b.status === "done" ? "done" : live ? "now" : ask ? "ask" : "";
-  const meta = [dur(mins), t.location].filter(Boolean).join(", ");
+  const meta = dur(mins);
   const due = b.status === "planned" ? dueInfo(t) : null;
   let actions = "";
   if (b.status === "planned" && open) {
@@ -164,7 +179,7 @@ function planView() {
     const hasOpen = S.tasks.some((t) => t.status === "open");
     return html + `<div class="empty"><p>${
       hasOpen
-        ? "Your tasks don't fit anywhere yet. Check your hours and the places they're tagged with."
+        ? "Your tasks don't fit anywhere yet. Check your hours and which blocks each task is allowed in."
         : "Nothing to plan yet. Add a task with the + button, or a habit on the Habits tab."
     }</p></div>`;
   }
@@ -193,7 +208,7 @@ function tasksView() {
   let html = `<h1>Tasks</h1><p class="sub">${open.length ? `${open.length} open, ${dur(total)} left to do.` : "Nothing open."}</p>`;
   for (const t of open) {
     const missed = t.missedCount ? `, missed ${t.missedCount === 1 ? "once" : t.missedCount + " times"}` : "";
-    const meta = [`${dur(t.durationMin - t.doneMin)} left`, t.location].filter(Boolean).join(", ") + missed;
+    const meta = [`${dur(t.durationMin - t.doneMin)} left`, blocksText(t.blocks)].filter(Boolean).join(", ") + missed;
     html += `<button class="task p${t.priority}" data-edit="${t.id}">
       <span class="pri" aria-label="Priority ${t.priority}, ${PRIORITY[t.priority]}">${t.priority}</span>
       <span><span class="title">${esc(t.title)}</span>
@@ -215,7 +230,7 @@ function tasksView() {
 
 function taskSheet(t) {
   const isNew = !t;
-  t = t || { title: "", priority: 2, durationMin: 60, minChunkMin: 30, location: "", notes: "", dueDate: null };
+  t = t || { title: "", priority: 2, durationMin: 60, minChunkMin: 30, blocks: [], notes: "", dueDate: null };
   sheet.innerHTML = `<form method="dialog">
     <h2>${isNew ? "New task" : "Edit task"}</h2>
     <label for="f-title">What needs doing</label>
@@ -234,10 +249,7 @@ function taskSheet(t) {
     <label for="f-due">Deadline</label>
     <input id="f-due" name="dueDate" type="date" value="${esc(t.dueDate ?? "")}">
     <p class="hint">Optional. Done by the end of this day. If it's running out of time, it's planned ahead of everything else, whatever its priority.</p>
-    <label for="f-loc">Where it has to happen</label>
-    <input id="f-loc" name="location" type="text" value="${esc(t.location ?? "")}" list="places" placeholder="Anywhere" autocapitalize="none" autocomplete="off">
-    <datalist id="places">${places().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
-    <p class="hint">Leave empty if it can be done anywhere. Otherwise it's only planned into hours tagged with this place.</p>
+    ${blockPicker(t.blocks ?? [])}
     <label for="f-notes">Notes</label>
     <textarea id="f-notes" name="notes" maxlength="2000">${esc(t.notes)}</textarea>
     <div class="foot">
@@ -260,7 +272,7 @@ function taskSheet(t) {
       priority: Number(f.get("priority")),
       durationMin: Number(f.get("durationMin")),
       minChunkMin: Number(f.get("minChunkMin")),
-      location: f.get("location"),
+      blocks: f.getAll("blocks"),
       notes: f.get("notes"),
       dueDate: f.get("dueDate") || null,
     };
@@ -314,7 +326,7 @@ function habitsView() {
     html += `<button class="task p${h.priority} ${h.active ? "" : "paused"}" data-habit="${h.id}">
       <span class="pri" aria-label="Priority ${h.priority}, ${PRIORITY[h.priority]}">${h.priority}</span>
       <span><span class="title">${esc(h.title)}</span>
-        <span class="meta">${esc([habitRepeats(h), h.location].filter(Boolean).join(", "))}</span>
+        <span class="meta">${esc([habitRepeats(h), blocksText(h.blocks)].filter(Boolean).join(", "))}</span>
         <span class="meta">${esc(week)}</span>
         ${next ? `<span class="meta">${esc(next)}</span>` : ""}
         ${h.active && pct ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}</span>
@@ -325,7 +337,7 @@ function habitsView() {
 
 function habitSheet(h) {
   const isNew = !h;
-  h = h || { title: "", kind: "daily", priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, location: "", active: true };
+  h = h || { title: "", kind: "daily", priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [], active: true };
   const kinds = [["daily", "Every day"], ["days", "Days a week"], ["hours", "Hours a week"]];
   sheet.innerHTML = `<form method="dialog">
     <h2>${isNew ? "New habit" : "Edit habit"}</h2>
@@ -358,9 +370,7 @@ function habitSheet(h) {
     <div class="picks" role="radiogroup" aria-labelledby="l-hpri">
       ${[1, 2, 3, 4].map((p) => `<label class="pick p${p}"><input type="radio" name="priority" value="${p}" ${h.priority === p ? "checked" : ""}><span><b>${p}</b>${PRIORITY[p]}</span></label>`).join("")}
     </div>
-    <label for="h-loc">Where it has to happen</label>
-    <input id="h-loc" name="location" type="text" value="${esc(h.location ?? "")}" list="places" placeholder="Anywhere" autocapitalize="none" autocomplete="off">
-    <datalist id="places">${places().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
+    ${blockPicker(h.blocks ?? [])}
     <div class="foot">
       <button class="btn" value="save">${isNew ? "Add habit" : "Save changes"}</button>
       ${isNew ? "" : `<button class="btn ghost" value="${h.active ? "pause" : "resume"}" formnovalidate>${h.active ? "Pause" : "Resume"}</button>
@@ -390,7 +400,7 @@ function habitSheet(h) {
       weeklyMin: Math.round((Number(f.get("weeklyHours")) * 60) / 5) * 5,
       minChunkMin: Number(f.get("minChunkMin")),
       maxPerDayMin: max === "" ? null : Number(max),
-      location: f.get("location"),
+      blocks: f.getAll("blocks"),
     };
     let ok;
     if (what === "delete") ok = confirm(`Delete "${h.title}"? Its planned blocks are removed; finished ones stay.`) && (await act("DELETE", `/api/habits/${h.id}`, null, "Deleted"));
@@ -414,15 +424,16 @@ function rangesHtml(scope, key, list) {
   return list.map((r, i) => `<div class="range" data-scope="${scope}" data-key="${key}" data-i="${i}">
       <input type="time" data-f="start" value="${esc(r.start)}" aria-label="From">
       <input type="time" data-f="end" value="${esc(r.end)}" aria-label="Until">
-      <input type="text" data-f="location" value="${esc(r.location ?? "")}" placeholder="Place, e.g. home (optional)" list="places-h" autocapitalize="none" autocomplete="off" aria-label="Place">
+      <input type="text" data-f="name" value="${esc(r.name ?? "")}" placeholder="Name, e.g. focus (optional)" list="names-h" autocapitalize="none" autocomplete="off" aria-label="Block name">
       <button class="x" data-h="remove" aria-label="Remove these hours">×</button>
+      ${r.name ? `<label class="check strict"><input type="checkbox" data-f="strict" ${r.strict ? "checked" : ""}>Only for work that picks ${esc(r.name)}</label>` : ""}
     </div>`).join("");
 }
 
 function hoursView() {
   const h = (hoursDraft ??= cloneHours());
-  let html = `<h1>Hours</h1><p class="sub">When tasks may be planned, and where you'll be. A task that needs a place only goes into hours tagged with that place.</p>
-    <datalist id="places-h">${places().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>`;
+  let html = `<h1>Hours</h1><p class="sub">When work may be planned. Give a block of hours a name, like focus, home or review, and each task or habit can then be limited to the blocks you pick for it. A named block can also be kept only for the work that picks it.</p>
+    <datalist id="names-h">${blockNames().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>`;
   for (let d = 1; d <= 7; d++) {
     html += `<div class="hday"><header><b>${DAYS[d]}</b><button class="link" data-h="add" data-scope="weekly" data-key="${d}">Add hours</button></header>
       ${rangesHtml("weekly", d, h.weekly[d] ?? [])}</div>`;
@@ -452,7 +463,7 @@ function hoursClick(el) {
     const start = last ? last.end : "09:00";
     const [hh, mm] = start.split(":").map(Number);
     const end = `${String(Math.min(23, hh + 3)).padStart(2, "0")}:${hh + 3 > 23 ? "59" : String(mm).padStart(2, "0")}`;
-    list.push({ start, end, location: last?.location ?? null });
+    list.push({ start, end, name: null, strict: false });
   } else if (what === "remove") {
     h[row.dataset.scope][row.dataset.key].splice(Number(row.dataset.i), 1);
   } else if (what === "copy") {
@@ -597,7 +608,12 @@ view.addEventListener("change", (e) => {
   const row = e.target.closest(".range[data-scope]");
   if (!row || !hoursDraft) return;
   const r = hoursDraft[row.dataset.scope][row.dataset.key][Number(row.dataset.i)];
-  r[e.target.dataset.f] = e.target.dataset.f === "location" ? e.target.value.trim().toLowerCase() || null : e.target.value;
+  const field = e.target.dataset.f;
+  if (field === "strict") r.strict = e.target.checked;
+  else if (field === "name") {
+    r.name = e.target.value.replace(/,/g, " ").trim().toLowerCase() || null;
+    if (!r.name) r.strict = false; // a block with no name can't be picked, so it can't be reserved
+  } else r[field] = e.target.value;
   render(true);
 });
 view.addEventListener("submit", (e) => {

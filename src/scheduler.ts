@@ -9,8 +9,8 @@ export interface SchedTask {
   remainingMin: number;
   /** Smallest piece this task may be split into. */
   minChunkMin: number;
-  /** Required location tag, or null when the task can be done anywhere. */
-  location: string | null;
+  /** Names of the blocks of hours this task may go in. Null or empty means any. */
+  blocks: string[] | null;
   /** Tie-breaker within a priority: older tasks go first. */
   createdAt: number;
   /** Do not place this task before this instant (set when a block is skipped). */
@@ -33,8 +33,10 @@ export interface SchedTask {
 export interface Window {
   start: number;
   end: number;
-  /** Where you are during this window, or null when untagged. */
-  location: string | null;
+  /** The block's name (e.g. "focus"), or null when it has none. */
+  name: string | null;
+  /** A strict block is reserved: it takes only tasks that list its name. */
+  strict?: boolean;
   /** Local calendar date of the window ("YYYY-MM-DD"). Needed only for per-day caps. */
   day?: string;
 }
@@ -80,10 +82,19 @@ const MIN = 60_000;
 const ceilTo = (t: number, step: number) => Math.ceil(t / step) * step;
 const floorTo = (t: number, step: number) => Math.floor(t / step) * step;
 
-/** Normalize a location tag so "Home" and " home" are the same place. */
-export const normLoc = (s: string | null | undefined): string | null => {
-  const v = (s ?? "").trim().toLowerCase();
+/** Normalize a block name so "Focus" and " focus" are the same block. */
+export const normName = (s: string | null | undefined): string | null => {
+  const v = String(s ?? "").replace(/,/g, " ").trim().toLowerCase();
   return v === "" ? null : v;
+};
+
+/**
+ * Normalize a task's list of allowed blocks. Accepts an array or the
+ * comma-separated form the database stores; returns sorted, unique names.
+ */
+export const normBlocks = (v: unknown): string[] => {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+  return [...new Set(list.map((x) => normName(String(x))).filter((x): x is string => x !== null))].sort();
 };
 
 /** Remove every `cut` interval from `base`. */
@@ -105,12 +116,15 @@ export function subtract(base: Interval, cuts: Interval[]): Interval[] {
 }
 
 /**
- * A task fits a window when it needs no particular place, or when the window
- * is tagged with the place it needs. Untagged windows take only untagged tasks.
+ * A task that lists blocks fits only windows whose name is on its list. A
+ * task that lists none fits any window except a strict one, which is reserved
+ * for tasks that name it.
  */
-export function fits(task: SchedTask, w: { location: string | null }): boolean {
-  const need = normLoc(task.location);
-  return need === null || need === normLoc(w.location);
+export function fits(task: SchedTask, w: { name: string | null; strict?: boolean }): boolean {
+  const allowed = normBlocks(task.blocks);
+  const name = normName(w.name);
+  if (allowed.length === 0) return !(w.strict && name !== null);
+  return name !== null && allowed.includes(name);
 }
 
 /**
@@ -150,7 +164,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
       for (const p of subtract(clipped, input.busy)) {
         const start = ceilTo(p.start, gran);
         const end = floorTo(p.end, gran);
-        if (end > start) slots.push({ start, end, location: w.location, day: w.day });
+        if (end > start) slots.push({ start, end, name: w.name, strict: w.strict, day: w.day });
       }
     }
     return slots.sort((a, b) => a.start - b.start);
@@ -190,7 +204,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         remaining -= chunk;
         used[day] = (used[day] ?? 0) + chunk;
         // Keep whatever is left of the slot on either side of the new block.
-        const after = { start: Math.min(slot.end, end + buffer), end: slot.end, location: slot.location, day: slot.day };
+        const after = { start: Math.min(slot.end, end + buffer), end: slot.end, name: slot.name, strict: slot.strict, day: slot.day };
         if (start > slot.start) {
           slot.end = start;
           slots.splice(i + 1, 0, after);

@@ -136,7 +136,6 @@ function eventBody(block: BlockRow, task: TaskRow): calendar_v3.Schema$Event {
   return {
     summary: (block.status === "done" ? "✓ " : "") + task.title,
     description: lines.join("\n"),
-    location: task.location ?? undefined,
     start: { dateTime: new Date(block.start).toISOString() },
     end: { dateTime: new Date(block.end).toISOString() },
     reminders:

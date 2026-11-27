@@ -21,10 +21,10 @@ before(async () => {
   dbm.saveHours({
     weekly: {
       "1": [
-        { start: "09:00", end: "12:00", location: null },
-        { start: "19:00", end: "21:00", location: null },
+        { start: "09:00", end: "12:00", name: null },
+        { start: "19:00", end: "21:00", name: null },
       ],
-      "2": [{ start: "09:00", end: "12:00", location: null }],
+      "2": [{ start: "09:00", end: "12:00", name: null }],
       "3": [], "4": [], "5": [], "6": [], "7": [],
     },
     overrides: {},

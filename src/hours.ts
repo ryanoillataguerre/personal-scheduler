@@ -1,14 +1,16 @@
 // Turns "which hours I work each day" into concrete time windows.
 import { DateTime } from "luxon";
 import type { Window } from "./scheduler.js";
-import { normLoc } from "./scheduler.js";
+import { normName } from "./scheduler.js";
 
 /** One stretch of workable time on a day. Times are "HH:MM" in local time. */
 export interface HourRange {
   start: string;
   end: string;
-  /** Where you are for this stretch (e.g. "home"). Empty means untagged. */
-  location?: string | null;
+  /** What this block of hours is called (e.g. "focus"). Tasks can be limited to named blocks. */
+  name?: string | null;
+  /** Reserve the block for work that picks its name. Only meaningful on a named block. */
+  strict?: boolean;
 }
 
 export interface Hours {
@@ -20,11 +22,11 @@ export interface Hours {
 
 export const DEFAULT_HOURS: Hours = {
   weekly: {
-    "1": [{ start: "09:00", end: "17:00", location: null }],
-    "2": [{ start: "09:00", end: "17:00", location: null }],
-    "3": [{ start: "09:00", end: "17:00", location: null }],
-    "4": [{ start: "09:00", end: "17:00", location: null }],
-    "5": [{ start: "09:00", end: "17:00", location: null }],
+    "1": [{ start: "09:00", end: "17:00", name: null, strict: false }],
+    "2": [{ start: "09:00", end: "17:00", name: null, strict: false }],
+    "3": [{ start: "09:00", end: "17:00", name: null, strict: false }],
+    "4": [{ start: "09:00", end: "17:00", name: null, strict: false }],
+    "5": [{ start: "09:00", end: "17:00", name: null, strict: false }],
     "6": [],
     "7": [],
   },
@@ -40,7 +42,21 @@ function parseRange(r: unknown): HourRange {
   if (end === "24:00") end = "23:59";
   if (!HHMM.test(start) || !HHMM.test(end)) throw new Error(`Times must be HH:MM, got "${start}"–"${end}"`);
   if (end <= start) throw new Error(`A time range must end after it starts (${start}–${end})`);
-  return { start, end, location: normLoc(o.location as string | null) };
+  // "location" is what this field was called before blocks had names.
+  const name = normName((o.name ?? o.location) as string | null);
+  return { start, end, name, strict: name !== null && o.strict === true };
+}
+
+/** Read hours saved by an earlier version, where a block's name was its "location". */
+export function upgradeHours(stored: Hours): Hours {
+  const fix = (list: (HourRange & { location?: string | null })[]) =>
+    list.map((r) => {
+      const name = normName(r.name ?? r.location);
+      return { start: r.start, end: r.end, name, strict: name !== null && r.strict === true };
+    });
+  const map = (days: Record<string, HourRange[]>) =>
+    Object.fromEntries(Object.entries(days ?? {}).map(([k, list]) => [k, fix(list ?? [])]));
+  return { weekly: map(stored.weekly), overrides: map(stored.overrides) };
 }
 
 /** Validate and normalize hours coming from the client. Throws on bad input. */
@@ -83,7 +99,7 @@ export function expandWindows(hours: Hours, now: number, zone: string, days: num
       // Building from the calendar date keeps this correct across DST changes.
       const start = day.set({ hour: sh, minute: sm }).toMillis();
       const end = day.set({ hour: eh, minute: em }).toMillis();
-      if (end > start) out.push({ start, end, location: normLoc(r.location), day: date });
+      if (end > start) out.push({ start, end, name: normName(r.name), strict: r.strict === true, day: date });
     }
   }
   return out;

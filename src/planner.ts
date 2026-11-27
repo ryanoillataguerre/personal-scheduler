@@ -5,7 +5,7 @@ import { fetchBusy, syncEvents } from "./google.js";
 import { DateTime } from "luxon";
 import { syncHabits } from "./habits.js";
 import { expandWindows } from "./hours.js";
-import { schedule, type Interval, type SchedTask } from "./scheduler.js";
+import { normBlocks, schedule, type Interval, type SchedTask } from "./scheduler.js";
 
 const MIN = 60_000;
 const GRANULARITY_MIN = 5;
@@ -83,7 +83,7 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
         priority: t.priority,
         remainingMin: Math.max(0, t.duration_min - t.done_min - (pinnedMin.get(t.id) ?? 0)),
         minChunkMin: t.min_chunk_min,
-        location: t.location,
+        blocks: normBlocks(t.blocks),
         createdAt: t.created_at,
         notBefore: Math.max(t.not_before ?? 0, t.period_start ?? 0) || null,
         dueBy: t.due_date ? dueTime(t.due_date, s.zone) : null,
