@@ -14,7 +14,16 @@ import {
   listCalendars,
   redirectUri,
 } from "./google.js";
-import { createHabit, deleteHabit, getHabit, habitProgress, parseHabit, setHabitActive, updateHabit } from "./habits.js";
+import {
+  createHabit,
+  deleteHabit,
+  getHabit,
+  habitProgress,
+  habitWeekdays,
+  parseHabit,
+  setHabitActive,
+  updateHabit,
+} from "./habits.js";
 import { parseHours, pruneOverrides } from "./hours.js";
 import {
   completeBlock,
@@ -108,6 +117,9 @@ const publicHabit = (h: HabitRow) => ({
   minChunkMin: h.min_chunk_min,
   maxPerDayMin: h.max_per_day_min,
   blocks: normBlocks(h.blocks),
+  days: habitWeekdays(h) ?? [],
+  timeFrom: h.time_from,
+  timeTo: h.time_to,
   active: h.active === 1,
 });
 

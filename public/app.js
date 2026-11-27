@@ -292,10 +292,24 @@ function taskSheet(t) {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+const DAY_SHORT = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function daysText(days) {
+  const key = days.join("");
+  if (key === "12345") return "weekdays";
+  if (key === "67") return "weekends";
+  return days.map((d) => DAY_SHORT[d]).join(", ");
+}
+/** "17:15" as the reader's clock would show it. */
+const clockText = (hhmm) =>
+  new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(new Date(`2000-01-01T${hhmm}:00Z`));
+
 function habitRepeats(h) {
-  if (h.kind === "daily") return `Every day, ${dur(h.sessionMin)}`;
-  if (h.kind === "days") return `${plural(h.daysPerWeek, "day")} a week, ${dur(h.sessionMin)} each`;
-  return `${dur(h.weeklyMin)} a week${h.maxPerDayMin ? `, up to ${dur(h.maxPerDayMin)} a day` : ""}`;
+  const on = h.days.length ? daysText(h.days) : "";
+  const between = h.timeFrom ? `, between ${clockText(h.timeFrom)} and ${clockText(h.timeTo)}` : "";
+  if (h.kind === "daily") return `${on ? `Every ${on.startsWith("week") ? on.slice(0, -1) : on}` : "Every day"}, ${dur(h.sessionMin)}${between}`;
+  const onDays = on ? `, on ${on}` : "";
+  if (h.kind === "days") return `${plural(h.daysPerWeek, "day")} a week, ${dur(h.sessionMin)} each${onDays}${between}`;
+  return `${dur(h.weeklyMin)} a week${h.maxPerDayMin ? `, up to ${dur(h.maxPerDayMin)} a day` : ""}${onDays}${between}`;
 }
 
 function habitStatus(h) {
@@ -337,7 +351,7 @@ function habitsView() {
 
 function habitSheet(h) {
   const isNew = !h;
-  h = h || { title: "", kind: "daily", priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [], active: true };
+  h = h || { title: "", kind: "daily", priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [], days: [], timeFrom: null, timeTo: null, active: true };
   const kinds = [["daily", "Every day"], ["days", "Days a week"], ["hours", "Hours a week"]];
   sheet.innerHTML = `<form method="dialog">
     <h2>${isNew ? "New habit" : "Edit habit"}</h2>
@@ -370,7 +384,17 @@ function habitSheet(h) {
     <div class="picks" role="radiogroup" aria-labelledby="l-hpri">
       ${[1, 2, 3, 4].map((p) => `<label class="pick p${p}"><input type="radio" name="priority" value="${p}" ${h.priority === p ? "checked" : ""}><span><b>${p}</b>${PRIORITY[p]}</span></label>`).join("")}
     </div>
-    ${blockPicker(h.blocks ?? [])}
+    <span class="label" id="l-days">Only on these days</span>
+    <div class="chips" role="group" aria-labelledby="l-days">
+      ${[1, 2, 3, 4, 5, 6, 7].map((d) => `<label class="chip"><input type="checkbox" name="days" value="${d}" ${h.days.includes(d) ? "checked" : ""}><span>${DAY_SHORT[d]}</span></label>`).join("")}
+    </div>
+    <p class="hint">Leave all off for any day.</p>
+    <div class="row">
+      <div><label for="h-from">Only between</label><input id="h-from" name="timeFrom" type="time" value="${esc(h.timeFrom ?? "")}"></div>
+      <div><label for="h-to">and</label><input id="h-to" name="timeTo" type="time" value="${esc(h.timeTo ?? "")}"></div>
+    </div>
+    <p class="hint">Optional. With both times set, it's planned inside that window on its days, even outside your hours, and block names don't apply to it.</p>
+    <div id="h-blocks">${blockPicker(h.blocks ?? [])}</div>
     <div class="foot">
       <button class="btn" value="save">${isNew ? "Add habit" : "Save changes"}</button>
       ${isNew ? "" : `<button class="btn ghost" value="${h.active ? "pause" : "resume"}" formnovalidate>${h.active ? "Pause" : "Resume"}</button>
@@ -382,8 +406,10 @@ function habitSheet(h) {
   const showKind = () => {
     const kind = new FormData(form).get("kind");
     for (const el of form.querySelectorAll("[data-for]")) el.hidden = !el.dataset.for.split(" ").includes(kind);
+    // A set time replaces named blocks, so the block picker steps aside.
+    $("#h-blocks", form).hidden = Boolean($("#h-from", form).value && $("#h-to", form).value);
   };
-  form.addEventListener("change", (e) => e.target.name === "kind" && showKind());
+  form.addEventListener("change", showKind);
   showKind();
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -401,6 +427,9 @@ function habitSheet(h) {
       minChunkMin: Number(f.get("minChunkMin")),
       maxPerDayMin: max === "" ? null : Number(max),
       blocks: f.getAll("blocks"),
+      days: f.getAll("days").map(Number),
+      timeFrom: f.get("timeFrom") || null,
+      timeTo: f.get("timeTo") || null,
     };
     let ok;
     if (what === "delete") ok = confirm(`Delete "${h.title}"? Its planned blocks are removed; finished ones stay.`) && (await act("DELETE", `/api/habits/${h.id}`, null, "Deleted"));

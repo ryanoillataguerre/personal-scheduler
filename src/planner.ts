@@ -1,9 +1,9 @@
 // The loop: sweep missed blocks back into the queue, rebuild the plan from
 // now, save it, and push the difference to Google Calendar.
-import { db, getHours, getKv, getSettings, removeBlock, setKv, tx, type BlockRow, type TaskRow } from "./db.js";
+import { db, getHours, getKv, getSettings, removeBlock, setKv, tx, type BlockRow, type HabitRow, type TaskRow } from "./db.js";
 import { fetchBusy, syncEvents } from "./google.js";
 import { DateTime } from "luxon";
-import { syncHabits } from "./habits.js";
+import { habitDays, syncHabits } from "./habits.js";
 import { expandWindows } from "./hours.js";
 import { normBlocks, schedule, type Interval, type SchedTask } from "./scheduler.js";
 
@@ -67,6 +67,8 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
 
     // 4. Plan everything that is left.
     const tasks = db.prepare("SELECT * FROM tasks WHERE status = 'open'").all() as TaskRow[];
+    const habits = new Map((db.prepare("SELECT * FROM habits").all() as HabitRow[]).map((h) => [h.id, h]));
+    const horizonEnd = DateTime.fromMillis(now, { zone: s.zone }).startOf("day").plus({ days: s.horizonDays }).toMillis();
     const counted = db.prepare("SELECT * FROM blocks WHERE task_id = ? AND (status = 'done' OR start <= ?)");
     const schedTasks: SchedTask[] = tasks.map((t) => {
       // A daily cap has to count what was already done or is under way today.
@@ -88,6 +90,7 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
         notBefore: Math.max(t.not_before ?? 0, t.period_start ?? 0) || null,
         dueBy: t.due_date ? dueTime(t.due_date, s.zone) : null,
         notAfter: t.period_end,
+        ...habitTimes(t, habits.get(t.habit_id ?? -1), now, horizonEnd, s.zone),
         maxChunkMin: t.max_chunk_min,
         maxPerDayMin: t.max_per_day_min,
         usedByDay,
@@ -125,6 +128,14 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
   const info: PlanInfo = { at: now, unscheduled: result.unscheduled, urgent: result.urgent, late: result.late, lastMissed };
   setKv("plan", info);
   return info;
+}
+
+/** For a habit kept to certain days or a set time: where its occurrence may go. */
+function habitTimes(t: TaskRow, h: HabitRow | undefined, now: number, horizonEnd: number, zone: string) {
+  if (!h || !t.period_start || !t.period_end || (!h.days && !h.time_from)) return {};
+  const days = habitDays(h, Math.max(t.period_start, now), Math.min(t.period_end, horizonEnd), zone);
+  if (h.time_from) return { ownWindows: days.map((d) => ({ ...d.window!, day: d.date })) };
+  return { onlyDays: days.map((d) => d.date) };
 }
 
 // Replans run one at a time; requests that arrive mid-run share the next one.

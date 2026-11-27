@@ -48,6 +48,15 @@ A missed sitting is planned again later in the same day or week, like any missed
 
 A weekly habit added partway through a week asks for a proportional share of that first week. Within a priority, habits are placed before open-ended tasks because they have a deadline.
 
+### Days and times
+
+A habit can be kept to certain days, to a time of day, or both:
+
+- **Only on these days.** Pick weekdays and the habit is planned only on those, within your hours. An every-day habit becomes "every Saturday and Sunday", for example.
+- **Only between two times.** With a start and an end set, the habit is planned inside that window on its days. It does not need working hours there, so it can sit before or after your day, and block names do not apply to it, strict blocks included. It still avoids your calendar events and anything planned ahead of it.
+
+A set time is a window, not an appointment: a 60-minute sitting in a 07:00 to 08:30 window can start as late as 07:30 if something is in the way. Inside your hours it competes by priority like everything else, so give it a high priority if it must hold its time.
+
 How a habit repeats cannot be changed after it is created; delete it and add a new one. Pausing a habit takes its blocks off the plan until you resume it.
 
 ## How planning works

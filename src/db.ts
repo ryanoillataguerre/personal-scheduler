@@ -52,6 +52,11 @@ export interface HabitRow {
   max_per_day_min: number | null;
   /** Named blocks of hours the habit may go in, comma-separated. Null for any. */
   blocks: string | null;
+  /** ISO weekdays it may be done on ("1,3,5" for Mon, Wed, Fri). Null for any day. */
+  days: string | null;
+  /** A set time of day ("HH:MM" to "HH:MM"). Both null for no set time. */
+  time_from: string | null;
+  time_to: string | null;
   active: number;
   created_at: number;
 }
@@ -172,6 +177,9 @@ db.exec(`
     min_chunk_min INTEGER NOT NULL DEFAULT 30,
     max_per_day_min INTEGER,
     blocks TEXT,
+    days TEXT,
+    time_from TEXT,
+    time_to TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL
   );
@@ -193,6 +201,10 @@ for (const col of ["habit_id", "period_start", "period_end", "max_chunk_min", "m
   if (!taskColumns.has(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} INTEGER`);
 }
 if (!taskColumns.has("due_date")) db.exec("ALTER TABLE tasks ADD COLUMN due_date TEXT");
+const habitColumns = new Set((db.prepare("PRAGMA table_info(habits)").all() as { name: string }[]).map((c) => c.name));
+for (const col of ["days", "time_from", "time_to"]) {
+  if (!habitColumns.has(col)) db.exec(`ALTER TABLE habits ADD COLUMN ${col} TEXT`);
+}
 const blockColumns = new Set((db.prepare("PRAGMA table_info(blocks)").all() as { name: string }[]).map((c) => c.name));
 if (!blockColumns.has("credit_min")) db.exec("ALTER TABLE blocks ADD COLUMN credit_min INTEGER");
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS tasks_by_habit_period ON tasks(habit_id, period_start) WHERE habit_id IS NOT NULL");
