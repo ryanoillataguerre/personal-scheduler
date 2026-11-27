@@ -20,6 +20,7 @@ const win = (start: string, end: string, location: string | null = null): Window
   start: at(start),
   end: at(end),
   location,
+  day: start.slice(0, 10),
 });
 const show = (r: ReturnType<typeof schedule>) =>
   r.blocks.map((b) => `${b.taskId}@${hm(b.start)}-${hm(b.end).slice(4)}`);
@@ -198,6 +199,63 @@ test("a skipped task waits until its not-before time and others use the gap", ()
     busy: [],
   });
   assert.deepEqual(show(r), ["2@Mon 09:10-09:40", "1@Mon 10:00-11:00"]);
+});
+
+test("a deadline keeps blocks inside the period and reports what did not fit", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { remainingMin: 120, minChunkMin: 60, notAfter: at("2026-12-01T00:00") })],
+    windows: [win("2026-11-30T09:00", "2026-11-30T10:00"), win("2026-12-01T09:00", "2026-12-01T12:00")],
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["1@Mon 09:00-10:00"]);
+  assert.deepEqual(r.unscheduled, [{ taskId: 1, minutes: 60 }]);
+});
+
+test("within a priority, work with a deadline goes first", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { createdAt: 1 }), task(2, { createdAt: 2, remainingMin: 30, notAfter: at("2026-12-01T00:00") })],
+    windows: [win("2026-11-30T09:00", "2026-11-30T12:00")],
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["2@Mon 09:00-09:30", "1@Mon 09:30-10:30"]);
+});
+
+test("fixed sessions land once a day on separate days", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { remainingMin: 180, minChunkMin: 60, maxChunkMin: 60, maxPerDayMin: 60 })],
+    windows: [
+      win("2026-11-30T09:00", "2026-11-30T17:00"),
+      win("2026-12-01T09:00", "2026-12-01T17:00"),
+      win("2026-12-02T09:00", "2026-12-02T17:00"),
+    ],
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["1@Mon 09:00-10:00", "1@Tue 09:00-10:00", "1@Wed 09:00-10:00"]);
+});
+
+test("a daily cap spreads a weekly total and counts what is already done today", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { remainingMin: 240, minChunkMin: 30, maxPerDayMin: 90, usedByDay: { "2026-11-30": 60 } }),
+    ],
+    windows: [
+      win("2026-11-30T09:00", "2026-11-30T17:00"),
+      win("2026-12-01T09:00", "2026-12-01T17:00"),
+      win("2026-12-02T09:00", "2026-12-02T17:00"),
+      win("2026-12-03T09:00", "2026-12-03T17:00"),
+    ],
+    busy: [],
+  });
+  assert.deepEqual(show(r), [
+    "1@Mon 09:00-09:30",
+    "1@Tue 09:00-10:30",
+    "1@Wed 09:00-10:30",
+    "1@Thu 09:00-09:30",
+  ]);
 });
 
 test("subtract cuts intervals", () => {

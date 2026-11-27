@@ -33,6 +33,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -126,6 +127,7 @@ button { cursor: pointer; }
 .task .title { font-weight: 600; overflow-wrap: anywhere; }
 .task .meta { font-size: 0.875rem; color: var(--muted); }
 .task .meta { display: block; }
+.task.paused { opacity: 0.6; }
 .task.finished .title { font-weight: 400; color: var(--muted); text-decoration: line-through; }
 .task.finished .pri { background: var(--line); color: var(--muted); }
 .bar { display: block; height: 4px; border-radius: 2px; background: var(--line); margin-top: 0.4rem; overflow: hidden; }
@@ -160,7 +162,11 @@ textarea { min-height: 4.5rem; resize: vertical; }
 .unit input { padding-right: 3rem; }
 .unit span { position: absolute; right: 0.7rem; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 0.9375rem; pointer-events: none; }
 .picks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem; }
+.picks.three { grid-template-columns: repeat(3, 1fr); }
 .pick { position: relative; }
+.pick.k { --pc: var(--ink); }
+.pick.k input:checked + span { color: var(--paper); }
+.pick.k span { display: grid; place-items: center; height: 100%; }
 .pick input { position: absolute; opacity: 0; inset: 0; }
 .pick span {
   display: block; text-align: center; border: 1.5px solid var(--line); border-radius: 10px;
@@ -194,13 +200,13 @@ code { font-family: ui-monospace, Menlo, monospace; font-size: 0.875em; overflow
 /* ---- Chrome ---- */
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
 .tabs a {
   text-align: center; padding: 0.95rem 0 0.85rem; color: var(--muted);
-  text-decoration: none; font-weight: 600; font-size: 0.9375rem; border-top: 3px solid transparent; margin-top: -1px;
+  text-decoration: none; font-weight: 600; font-size: 0.875rem; border-top: 3px solid transparent; margin-top: -1px;
 }
 .tabs a[aria-current="page"] { color: var(--ink); border-top-color: var(--ink); }
 .add {

@@ -15,6 +15,14 @@ export interface SchedTask {
   createdAt: number;
   /** Do not place this task before this instant (set when a block is skipped). */
   notBefore?: number | null;
+  /** Every block must end by this instant. Used by habits: a day's or week's end. */
+  notAfter?: number | null;
+  /** Largest single block. Habits with a fixed session set this equal to the smallest piece. */
+  maxChunkMin?: number | null;
+  /** Most minutes to place on any one day. */
+  maxPerDayMin?: number | null;
+  /** Minutes already done or under way per day (keyed like Window.day), counted against the daily cap. */
+  usedByDay?: Record<string, number>;
 }
 
 export interface Window {
@@ -22,6 +30,8 @@ export interface Window {
   end: number;
   /** Where you are during this window, or null when untagged. */
   location: string | null;
+  /** Local calendar date of the window ("YYYY-MM-DD"). Needed only for per-day caps. */
+  day?: string;
 }
 
 export interface Interval {
@@ -124,14 +134,21 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     for (const p of subtract(clipped, input.busy)) {
       const start = ceilTo(p.start, gran);
       const end = floorTo(p.end, gran);
-      if (end > start) slots.push({ start, end, location: w.location });
+      if (end > start) slots.push({ start, end, location: w.location, day: w.day });
     }
   }
   slots.sort((a, b) => a.start - b.start);
 
   const order = [...input.tasks]
     .filter((t) => t.remainingMin > 0)
-    .sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt || a.id - b.id);
+    // Priority first. Within a priority, work with a deadline goes before open-ended work.
+    .sort(
+      (a, b) =>
+        a.priority - b.priority ||
+        (a.notAfter ?? Infinity) - (b.notAfter ?? Infinity) ||
+        a.createdAt - b.createdAt ||
+        a.id - b.id,
+    );
 
   const blocks: PlannedBlock[] = [];
   const unscheduled: { taskId: number; minutes: number }[] = [];
@@ -142,18 +159,30 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     const minChunk = Math.max(granMin, Math.ceil(task.minChunkMin / granMin) * granMin);
 
     const notBefore = task.notBefore ? ceilTo(task.notBefore, gran) : 0;
+    const notAfter = task.notAfter ? floorTo(task.notAfter, gran) : Infinity;
+    const maxChunk = task.maxChunkMin ? Math.max(minChunk, task.maxChunkMin) : Infinity;
+    const perDay = task.maxPerDayMin ?? Infinity;
+    const used: Record<string, number> = { ...(task.usedByDay ?? {}) };
+
     for (let i = 0; i < slots.length && remaining > 0; i++) {
       const slot = slots[i];
+      if (slot.start >= notAfter) break; // slots are in time order
       if (!fits(task, slot)) continue;
       const start = Math.max(slot.start, notBefore);
-      if (start >= slot.end) continue;
-      const chunk = chunkFor(remaining, minChunk, (slot.end - start) / MIN);
+      const limit = Math.min(slot.end, notAfter);
+      if (start >= limit) continue;
+      const day = slot.day ?? "";
+      const dayLeft = perDay - (used[day] ?? 0);
+      if (dayLeft <= 0) continue;
+      const room = Math.min((limit - start) / MIN, dayLeft, maxChunk);
+      const chunk = chunkFor(remaining, minChunk, room);
       if (chunk <= 0) continue;
       const end = start + chunk * MIN;
       blocks.push({ taskId: task.id, start, end });
       remaining -= chunk;
+      used[day] = (used[day] ?? 0) + chunk;
       // Keep whatever is left of the slot on either side of the new block.
-      const after = { start: Math.min(slot.end, end + buffer), end: slot.end, location: slot.location };
+      const after = { start: Math.min(slot.end, end + buffer), end: slot.end, location: slot.location, day: slot.day };
       if (start > slot.start) {
         slot.end = start;
         slots.splice(i + 1, 0, after);
