@@ -31,7 +31,30 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Open http://localhost:8787 on the machine. Data lives in `./data/dayloop.db`; back up that one file.
+Open http://localhost:8787 on the machine.
+
+## Where your data lives
+
+Everything is in one SQLite file, `./data/dayloop.db`, next to `docker-compose.yml`: tasks, hours, settings and the Google sign-in. `./data` is an ordinary folder on the machine that the container is given access to. It is not a Docker-managed volume, so `docker compose down`, `down -v`, rebuilding the image and `docker system prune` do not touch it. Deleting the folder itself, or the disk failing, is what would lose it.
+
+### Backups
+
+Dayloop writes a full copy of the database to `./backups` every 24 hours and keeps the newest 14 (`BACKUP_KEEP` in `.env`). It checks on startup and every hour, so a machine that was off catches up when it comes back. Settings shows the last backup and has a **Back up now** button.
+
+Each copy is a complete, standalone SQLite file named `dayloop-YYYYMMDD-HHMMSS.db`. It includes your Google sign-in, so treat the folder as private. Both `data` and `backups` are in `.gitignore`.
+
+These copies protect against a deleted or damaged database. They are on the same disk, so they do not protect against the disk failing; for that, sync `./backups` somewhere else.
+
+To restore:
+
+```sh
+docker compose down
+cp backups/dayloop-20261201-090000.db data/dayloop.db
+rm -f data/dayloop.db-wal data/dayloop.db-shm
+docker compose up -d
+```
+
+Without Docker, backups go to `data/backups` unless `BACKUP_DIR` is set.
 
 Without Docker: `npm ci && npm run build && npm start` on Node 22.13 or newer.
 
@@ -97,6 +120,7 @@ npm test        # scheduler and planning-loop tests
 | `src/planner.ts` | The loop: sweep missed blocks, plan, save, sync |
 | `src/google.ts` | Sign-in, busy time, calendar events |
 | `src/server.ts` | HTTP API and static files |
+| `src/backup.ts` | Daily database copies and retention |
 | `public/` | The phone app, plain JavaScript |
 
 ## Tested and not tested

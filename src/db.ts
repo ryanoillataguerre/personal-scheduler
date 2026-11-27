@@ -56,7 +56,7 @@ const DEFAULT_SETTINGS: Settings = {
   busyCalendars: ["primary"],
 };
 
-const dataDir = process.env.DATA_DIR || path.resolve("data");
+export const dataDir = process.env.DATA_DIR || path.resolve("data");
 fs.mkdirSync(dataDir, { recursive: true });
 const raw = new DatabaseSync(path.join(dataDir, "dayloop.db"));
 raw.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
