@@ -71,7 +71,12 @@ function parseTask(body: Record<string, unknown>, existing?: TaskRow) {
   );
   const location = normLoc((body.location === undefined ? existing?.location : body.location) as string | null);
   const notes = String(body.notes ?? existing?.notes ?? "").slice(0, 2000);
-  return { title, duration, priority, minChunk: Math.min(minChunk, duration), location, notes };
+  const rawDue = body.dueDate === undefined ? existing?.due_date : body.dueDate;
+  const dueDate = rawDue === null || rawDue === undefined || rawDue === "" ? null : String(rawDue);
+  if (dueDate !== null && !(/^\d{4}-\d{2}-\d{2}$/.test(dueDate) && DateTime.fromISO(dueDate).isValid)) {
+    bad("The deadline must be a date like 2026-12-04.");
+  }
+  return { title, duration, priority, minChunk: Math.min(minChunk, duration), location, notes, dueDate };
 }
 
 const publicTask = (t: TaskRow) => ({
@@ -88,6 +93,7 @@ const publicTask = (t: TaskRow) => ({
   createdAt: t.created_at,
   completedAt: t.completed_at,
   habitId: t.habit_id,
+  dueDate: t.due_date,
 });
 
 const publicHabit = (h: HabitRow) => ({
@@ -177,8 +183,8 @@ app.post(
   change((req) => {
     const t = parseTask(req.body ?? {});
     db.prepare(
-      "INSERT INTO tasks (title, priority, duration_min, min_chunk_min, location, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run(t.title, t.priority, t.duration, t.minChunk, t.location, t.notes, Date.now());
+      "INSERT INTO tasks (title, priority, duration_min, min_chunk_min, location, notes, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(t.title, t.priority, t.duration, t.minChunk, t.location, t.notes, t.dueDate, Date.now());
   }),
 );
 
@@ -190,8 +196,8 @@ app.patch(
     if (existing.habit_id) return bad("This block comes from a habit. Edit the habit instead.");
     const t = parseTask(req.body ?? {}, existing);
     db.prepare(
-      "UPDATE tasks SET title = ?, priority = ?, duration_min = ?, min_chunk_min = ?, location = ?, notes = ? WHERE id = ?",
-    ).run(t.title, t.priority, t.duration, t.minChunk, t.location, t.notes, existing.id);
+      "UPDATE tasks SET title = ?, priority = ?, duration_min = ?, min_chunk_min = ?, location = ?, notes = ?, due_date = ? WHERE id = ?",
+    ).run(t.title, t.priority, t.duration, t.minChunk, t.location, t.notes, t.dueDate, existing.id);
     touchTask(existing.id);
     if (existing.status === "open" && existing.done_min >= t.duration) finishTask(existing.id);
   }),
@@ -244,6 +250,7 @@ app.put(
       reminderMin:
         b.reminderMin === null ? null : int(b.reminderMin ?? cur.reminderMin ?? 0, "Alert", 0, 240),
       busyCalendars: Array.isArray(b.busyCalendars) ? b.busyCalendars.map(String).slice(0, 50) : cur.busyCalendars,
+      deadlineCushionHours: int(b.deadlineCushionHours ?? cur.deadlineCushionHours, "Deadline cushion", 0, 336),
     };
     if (next.reminderMin !== cur.reminderMin) db.prepare("UPDATE blocks SET synced = 0 WHERE status = 'planned'").run();
     saveSettings(next);

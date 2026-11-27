@@ -21,6 +21,8 @@ export interface TaskRow {
   completed_at: number | null;
   /** Set when a block is skipped: do not plan this task before then. */
   not_before: number | null;
+  /** Date the task is due ("YYYY-MM-DD"), meaning by the end of that day. Null for no deadline. */
+  due_date: string | null;
   /** Set on rows generated from a habit: which habit, and the day or week they belong to. */
   habit_id: number | null;
   period_start: number | null;
@@ -77,6 +79,8 @@ export interface Settings {
   reminderMin: number | null;
   /** Google calendars whose events block time. */
   busyCalendars: string[];
+  /** Aim to finish tasks with a deadline this many hours before they are due. */
+  deadlineCushionHours: number;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -86,6 +90,7 @@ const DEFAULT_SETTINGS: Settings = {
   bufferMin: 0,
   reminderMin: 0,
   busyCalendars: ["primary"],
+  deadlineCushionHours: 24,
 };
 
 const dataDir = process.env.DATA_DIR || path.resolve("data");
@@ -177,6 +182,7 @@ const taskColumns = new Set((db.prepare("PRAGMA table_info(tasks)").all() as { n
 for (const col of ["habit_id", "period_start", "period_end", "max_chunk_min", "max_per_day_min"]) {
   if (!taskColumns.has(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} INTEGER`);
 }
+if (!taskColumns.has("due_date")) db.exec("ALTER TABLE tasks ADD COLUMN due_date TEXT");
 const blockColumns = new Set((db.prepare("PRAGMA table_info(blocks)").all() as { name: string }[]).map((c) => c.name));
 if (!blockColumns.has("credit_min")) db.exec("ALTER TABLE blocks ADD COLUMN credit_min INTEGER");
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS tasks_by_habit_period ON tasks(habit_id, period_start) WHERE habit_id IS NOT NULL");

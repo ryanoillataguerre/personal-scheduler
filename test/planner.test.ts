@@ -123,3 +123,25 @@ test("unchanged blocks keep their calendar event; removed ones queue a delete", 
   planner.planNow(at("2026-12-14T08:11"), []);
   assert.deepEqual(blocks(), [`${a}:Mon 09:00-10:00:planned`]);
 });
+
+test("a due date means the end of that day, and the plan says what is urgent or late", () => {
+  for (const t of dbm.db.prepare("SELECT id FROM tasks").all() as { id: number }[]) planner.deleteTask(t.id);
+  assert.equal(hm(planner.dueTime("2026-12-14", ZONE)), "Tue 00:00"); // Monday the 14th, through midnight
+  const s = dbm.getSettings();
+  dbm.saveSettings({ ...s, deadlineCushionHours: 0 });
+
+  // Monday has 09:00-12:00 and 19:00-21:00. Five hours of priority 1 work fill it.
+  const big = addTask("Big", 300, 60, 1);
+  const due = addTask("Due today", 60, 60, 4);
+  dbm.db.prepare("UPDATE tasks SET due_date = '2026-12-14' WHERE id = ?").run(due);
+  const info = planner.planNow(at("2026-12-14T08:00"), []);
+  assert.equal(blocks()[0], `${due}:Mon 09:00-10:00:planned`);
+  assert.deepEqual([info.urgent, info.late], [[due], []]);
+
+  // With no deadline it would have waited behind the priority 1 work.
+  dbm.db.prepare("UPDATE tasks SET due_date = NULL WHERE id = ?").run(due);
+  const relaxed = planner.planNow(at("2026-12-14T08:05"), []);
+  assert.equal(blocks()[0], `${big}:Mon 09:00-12:00:planned`);
+  assert.deepEqual(relaxed.urgent, []);
+  dbm.saveSettings(s);
+});

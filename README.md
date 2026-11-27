@@ -8,8 +8,17 @@ Each task has:
 - a total length
 - a smallest piece, the shortest block it may be split into
 - optionally a place it has to happen
+- optionally a deadline: a date it must be done by the end of
 
 You set working hours per weekday, with one-off changes for single dates, and can tag each stretch of hours with a place. A task that needs a place is only planned into hours tagged with that place. Hours with no tag take only tasks that need no place.
+
+## Deadlines
+
+Priority decides the order until a deadline is at risk. Dayloop first plans by priority, then checks every task that has a deadline. Any that would not be finished in time is running out of time: it moves ahead of everything else, including priority 1 work and habits, and the plan is rebuilt. Several such tasks go earliest deadline first.
+
+"In time" means the deadline minus a cushion, 24 hours by default (Settings, "Finish deadline work early by"). The cushion leaves room for a missed block; set it to 0 to plan right up to the deadline.
+
+A task that cannot be finished by its deadline even at the front is still planned first, and the Plan and Tasks tabs say it won't be finished in time. An overdue task stays at the front until it is done. A deadline further away than the planning period (14 days by default) has no effect yet.
 
 ## Habits
 
@@ -95,6 +104,7 @@ Make Linux the default boot entry, and in the BIOS set the machine to power on a
 | Count a block as missed after | 15 min | Grace period after a block ends |
 | Gap between blocks | 0 min | Breathing room after each block |
 | Plan ahead | 14 days | How far the plan reaches |
+| Finish deadline work early by | 24 h | Cushion before a deadline; see Deadlines |
 | Phone alert | When it starts | Calendar notification per block |
 | Time zone | from `TZ` | Zone your hours are written in |
 
@@ -118,4 +128,4 @@ npm test        # scheduler and planning-loop tests
 
 ## Tested and not tested
 
-The scheduler, the missed-block loop, habits, the HTTP API and the phone app were tested, the app in a phone-sized Chrome. The Google Calendar code was written against the API documentation but has not been run against a live Google account, and the Docker image has not been built (its build steps were replayed by hand on Node 22). Expect to debug those two on first run.
+The scheduler, the missed-block loop, habits, deadlines, the HTTP API and the phone app were tested, the app in a phone-sized Chrome. The Google Calendar code was written against the API documentation but has not been run against a live Google account, and the Docker image has not been built (its build steps were replayed by hand on Node 22). Expect to debug those two on first run.

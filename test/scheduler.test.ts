@@ -258,6 +258,141 @@ test("a daily cap spreads a weekly total and counts what is already done today",
   ]);
 });
 
+// ---- Deadlines ---------------------------------------------------------------
+
+const week = [
+  win("2026-11-30T09:00", "2026-11-30T12:00"),
+  win("2026-12-01T09:00", "2026-12-01T12:00"),
+  win("2026-12-02T09:00", "2026-12-02T12:00"),
+];
+
+test("a deadline with time to spare leaves the priority order alone", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { priority: 1, remainingMin: 120 }),
+      task(2, { priority: 4, remainingMin: 60, dueBy: at("2026-12-03T00:00") }),
+    ],
+    windows: week,
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["1@Mon 09:00-11:00", "2@Mon 11:00-12:00"]);
+  assert.deepEqual([r.urgent, r.late], [[], []]);
+});
+
+test("a task that would miss its deadline jumps ahead of higher priorities", () => {
+  // Three hours of priority 1 work fill Monday; the low-priority task is due Monday night.
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { priority: 1, remainingMin: 180 }),
+      task(2, { priority: 4, remainingMin: 60, dueBy: at("2026-12-01T00:00") }),
+    ],
+    windows: week,
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["2@Mon 09:00-10:00", "1@Mon 10:00-12:00", "1@Tue 09:00-10:00"]);
+  assert.deepEqual([r.urgent, r.late], [[2], []]);
+});
+
+test("tasks running out of time go earliest deadline first, whatever their priority", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { priority: 1, remainingMin: 360 }),
+      task(2, { priority: 2, remainingMin: 120, dueBy: at("2026-12-02T00:00") }),
+      task(3, { priority: 4, remainingMin: 120, dueBy: at("2026-12-01T00:00") }),
+    ],
+    windows: week,
+    busy: [],
+  });
+  assert.deepEqual(show(r).slice(0, 3), ["3@Mon 09:00-11:00", "2@Mon 11:00-12:00", "2@Tue 09:00-10:00"]);
+  assert.deepEqual([r.urgent.sort(), r.late], [[2, 3], []]);
+});
+
+test("pulling one task forward can catch another, which is then pulled forward too", () => {
+  // Task 3 fits before its Monday-night deadline until task 2 is moved ahead of it.
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { priority: 1, remainingMin: 120 }),
+      task(3, { priority: 2, remainingMin: 60, dueBy: at("2026-12-01T00:00") }),
+      task(2, { priority: 3, remainingMin: 60, dueBy: at("2026-12-01T00:00"), createdAt: 0 }),
+    ],
+    windows: week,
+    busy: [],
+  });
+  // Both are due at the same time, so priority decides between the two of them.
+  assert.deepEqual(show(r), ["3@Mon 09:00-10:00", "2@Mon 10:00-11:00", "1@Mon 11:00-12:00", "1@Tue 09:00-10:00"]);
+  assert.deepEqual([r.urgent.sort(), r.late], [[2, 3], []]);
+});
+
+test("a deadline that cannot be met is reported, and the work still gets the first time available", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { priority: 1, remainingMin: 60 }),
+      task(2, { priority: 3, remainingMin: 300, minChunkMin: 60, dueBy: at("2026-12-01T00:00") }),
+    ],
+    windows: week,
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["2@Mon 09:00-12:00", "2@Tue 09:00-11:00", "1@Tue 11:00-12:00"]);
+  assert.deepEqual([r.urgent, r.late], [[2], [2]]);
+});
+
+test("an overdue task goes first and is reported late", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { priority: 1 }), task(2, { priority: 4, dueBy: at("2026-11-29T00:00") })],
+    windows: week,
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["2@Mon 09:00-10:00", "1@Mon 10:00-11:00"]);
+  assert.deepEqual([r.urgent, r.late], [[2], [2]]);
+});
+
+test("the cushion pulls work forward a day before it would be late", () => {
+  const tasks = [
+    task(1, { priority: 1, remainingMin: 180 }),
+    task(2, { priority: 4, remainingMin: 60, dueBy: at("2026-12-02T00:00") }), // due Tuesday night
+  ];
+  // No cushion: finishing Tuesday morning is in time, so priority order stands.
+  const plain = schedule({ now: at("2026-11-30T08:00"), tasks, windows: week, busy: [] });
+  assert.deepEqual(show(plain), ["1@Mon 09:00-12:00", "2@Tue 09:00-10:00"]);
+  assert.deepEqual(plain.urgent, []);
+  // A day's cushion: it should be done by Monday night, so it goes first.
+  const cushioned = schedule({ now: at("2026-11-30T08:00"), tasks, windows: week, busy: [], cushionMin: 24 * 60 });
+  assert.deepEqual(show(cushioned), ["2@Mon 09:00-10:00", "1@Mon 10:00-12:00", "1@Tue 09:00-10:00"]);
+  assert.deepEqual([cushioned.urgent, cushioned.late], [[2], []]);
+});
+
+test("a deadline past the planned period does not count unplanned work as late", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [
+      task(1, { priority: 1, remainingMin: 540 }), // fills all three days
+      task(2, { priority: 3, remainingMin: 60, dueBy: at("2026-12-20T00:00") }),
+    ],
+    windows: week,
+    busy: [],
+  });
+  assert.deepEqual([r.urgent, r.late], [[], []]);
+  assert.deepEqual(r.unscheduled, [{ taskId: 2, minutes: 60 }]);
+});
+
+test("a deadline respects where the task has to happen", () => {
+  // Only Tuesday has office hours, and that is after the deadline.
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { remainingMin: 60, location: "office", dueBy: at("2026-12-01T00:00") })],
+    windows: [win("2026-11-30T09:00", "2026-11-30T12:00", "home"), win("2026-12-01T09:00", "2026-12-01T12:00", "office")],
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["1@Tue 09:00-10:00"]);
+  assert.deepEqual(r.late, [1]);
+});
+
 test("subtract cuts intervals", () => {
   assert.deepEqual(subtract({ start: 0, end: 100 }, [{ start: 20, end: 30 }, { start: 90, end: 120 }]), [
     { start: 0, end: 20 },

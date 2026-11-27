@@ -17,11 +17,22 @@ export interface PlanInfo {
   at: number;
   /** Tasks that did not fully fit in the planning horizon. */
   unscheduled: { taskId: number; minutes: number }[];
+  /** Tasks with a deadline that were running out of time and were planned ahead of everything else. */
+  urgent: number[];
+  /** Tasks that will not be finished by their deadline even so. */
+  late: number[];
   /** Blocks swept as missed during the most recent run that found any. */
   lastMissed: { at: number; count: number } | null;
 }
 
-export const getPlanInfo = (): PlanInfo => getKv<PlanInfo>("plan", { at: 0, unscheduled: [], lastMissed: null });
+export const getPlanInfo = (): PlanInfo => ({
+  ...{ at: 0, unscheduled: [], urgent: [], late: [], lastMissed: null },
+  ...getKv<Partial<PlanInfo>>("plan", {}),
+});
+
+/** A due date means by the end of that day, in the user's time zone. */
+export const dueTime = (date: string, zone: string): number =>
+  DateTime.fromISO(date, { zone }).plus({ days: 1 }).startOf("day").toMillis();
 
 /** The planning step itself. Synchronous, so the database is never half-updated. */
 export function planNow(now: number, busy: Interval[]): PlanInfo {
@@ -29,7 +40,7 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
   const prev = getPlanInfo();
   let lastMissed = prev.lastMissed;
 
-  const unscheduled = tx(() => {
+  const result = tx(() => {
     // 1. A block that ended, plus the grace period, without being marked done
     //    was missed. Remove it; its minutes go back to the task automatically
     //    because only done blocks count as progress.
@@ -75,6 +86,7 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
         location: t.location,
         createdAt: t.created_at,
         notBefore: Math.max(t.not_before ?? 0, t.period_start ?? 0) || null,
+        dueBy: t.due_date ? dueTime(t.due_date, s.zone) : null,
         notAfter: t.period_end,
         maxChunkMin: t.max_chunk_min,
         maxPerDayMin: t.max_per_day_min,
@@ -90,6 +102,7 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
       busy: blocked,
       granularityMin: GRANULARITY_MIN,
       bufferMin: s.bufferMin,
+      cushionMin: s.deadlineCushionHours * 60,
     });
 
     // 5. Save the difference, so unchanged blocks keep their calendar events.
@@ -106,10 +119,10 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
     const insert = db.prepare("INSERT INTO blocks (task_id, start, end) VALUES (?, ?, ?)");
     for (const b of wanted.values()) insert.run(b.taskId, b.start, b.end);
 
-    return result.unscheduled;
+    return result;
   });
 
-  const info: PlanInfo = { at: now, unscheduled, lastMissed };
+  const info: PlanInfo = { at: now, unscheduled: result.unscheduled, urgent: result.urgent, late: result.late, lastMissed };
   setKv("plan", info);
   return info;
 }
