@@ -29,7 +29,7 @@ before(async () => {
   dbm.saveHours({ weekly: { "1": day, "2": day, "3": day, "4": day, "5": day, "6": day, "7": day }, overrides: {} });
 });
 
-const base = { priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [] as string[] };
+const base = { priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [] as string[], days: [] as number[], timeFrom: null as string | null, timeTo: null as string | null };
 const blocks = (habitId: number, status?: string) =>
   (
     dbm.db
@@ -178,11 +178,84 @@ test("pausing clears the plan, resuming restores it, deleting keeps finished wor
   assert.deepEqual(occurrences(id).map((t) => t.status), ["done"]);
 });
 
+test("a habit kept to certain days and a set time lands exactly there, even outside working hours", () => {
+  // Hours are 09:00-12:00 and 19:00-21:00. The gym slot is 07:00-08:30, before them.
+  const id = habits.createHabit(
+    { ...base, title: "Gym", kind: "days", sessionMin: 60, daysPerWeek: 3, days: [1, 3, 5], timeFrom: "07:00", timeTo: "08:30" },
+    at("2026-12-07T06:00"),
+  );
+  planner.planNow(at("2026-12-07T06:00"), []);
+  assert.deepEqual(show(blocks(id)).slice(0, 4), [
+    "Mon 7 07:00-08:00", "Wed 9 07:00-08:00", "Fri 11 07:00-08:00", "Mon 14 07:00-08:00",
+  ]);
+
+  // A calendar event over part of the slot pushes it later inside the slot, or off that day.
+  planner.planNow(at("2026-12-07T06:05"), [
+    { start: at("2026-12-07T06:30"), end: at("2026-12-07T07:20") }, // leaves 07:20-08:30: still fits
+    { start: at("2026-12-09T07:30"), end: at("2026-12-09T08:30") }, // leaves 07:00-07:30: too short
+  ]);
+  assert.deepEqual(show(blocks(id)).slice(0, 2), ["Mon 7 07:20-08:20", "Fri 11 07:00-08:00"]);
+  wipe();
+});
+
+test("a set time inside working hours takes that time away from other work", () => {
+  const review = habits.createHabit(
+    { ...base, title: "Weekly review", kind: "days", sessionMin: 45, daysPerWeek: 1, days: [5], timeFrom: "11:15", timeTo: "12:00", priority: 1 },
+    at("2026-12-07T08:00"),
+  );
+  const taskId = Number(
+    dbm.db
+      .prepare("INSERT INTO tasks (title, priority, duration_min, min_chunk_min, created_at) VALUES ('Big', 2, 1500, 60, 1)")
+      .run().lastInsertRowid,
+  );
+  planner.planNow(at("2026-12-07T08:00"), []);
+  assert.deepEqual(show(blocks(review)).slice(0, 1), ["Fri 11 11:15-12:00"]);
+  const friday = (dbm.db.prepare("SELECT b.* FROM blocks b WHERE b.task_id = ? ORDER BY b.start").all(taskId) as BlockRow[])
+    .map((b) => `${hm(b.start)}-${hm(b.end).split(" ")[2]}`)
+    .filter((b) => b.startsWith("Fri 11"));
+  assert.equal(friday[0], "Fri 11 09:00-11:15"); // the other work stops where the review starts
+  planner.deleteTask(taskId);
+  wipe();
+});
+
+test("days without a set time keep the habit to those days within working hours", () => {
+  const daily = habits.createHabit({ ...base, title: "Journal", kind: "daily", days: [6, 7] }, at("2026-12-07T08:00"));
+  const hours = habits.createHabit(
+    { ...base, title: "Spanish", kind: "hours", weeklyMin: 180, minChunkMin: 30, maxPerDayMin: 90, days: [2, 4] },
+    at("2026-12-07T08:00"),
+  );
+  planner.planNow(at("2026-12-07T08:00"), []);
+  assert.deepEqual(show(blocks(daily)).slice(0, 3), ["Sat 12 09:00-09:30", "Sun 13 09:00-09:30", "Sat 19 09:00-09:30"]);
+  assert.equal(occurrences(daily).length, 4); // weekends only: no rows for weekdays
+  assert.deepEqual(show(blocks(hours)).slice(0, 2), ["Tue 8 09:00-10:30", "Thu 10 09:00-10:30"]);
+  wipe();
+});
+
+test("a weekly habit's first week is shared out over the days it can still be done on", () => {
+  // Created Thursday. Its days are Mon, Wed, Fri: one of three is left.
+  const gym = habits.createHabit({ ...base, title: "Gym", kind: "days", sessionMin: 60, daysPerWeek: 3, days: [1, 3, 5] }, at("2026-12-10T08:00"));
+  planner.planNow(at("2026-12-10T08:00"), []);
+  assert.deepEqual(occurrences(gym).map((t) => t.duration_min), [60, 180, 180]);
+  wipe();
+});
+
 test("validation catches limits that cannot work", () => {
+  const ok = { title: "x", kind: "days", sessionMin: 60, daysPerWeek: 3 };
+  assert.throws(() => habits.parseHabit({ ...ok, days: [1, 3] }), /at least 3 days/);
+  assert.throws(() => habits.parseHabit({ ...ok, timeFrom: "07:00" }), /both a start and an end/);
+  assert.throws(() => habits.parseHabit({ ...ok, timeFrom: "08:00", timeTo: "07:00" }), /after the start/);
+  assert.throws(() => habits.parseHabit({ ...ok, timeFrom: "07:00", timeTo: "07:30" }), /shorter than one sitting/);
+  assert.throws(
+    () => habits.parseHabit({ title: "x", kind: "hours", weeklyMin: 600, minChunkMin: 30, days: [1, 2], timeFrom: "07:00", timeTo: "09:00" }),
+    /can't reach the weekly total/,
+  );
+  // A set time replaces named blocks.
+  const timed = habits.parseHabit({ ...ok, blocks: ["focus"], days: [5, 1, 3, 1], timeFrom: "07:00", timeTo: "08:30" });
+  assert.deepEqual([timed.blocks, timed.days, timed.timeFrom, timed.timeTo], [[], [1, 3, 5], "07:00", "08:30"]);
   assert.throws(() => habits.parseHabit({ title: "", kind: "daily" }), /name/);
   assert.throws(() => habits.parseHabit({ title: "x", kind: "weekly" }), /repeats/);
   assert.throws(
     () => habits.parseHabit({ title: "x", kind: "hours", weeklyMin: 600, minChunkMin: 30, maxPerDayMin: 60 }),
-    /seven days/,
+    /can't reach the weekly total/,
   );
 });

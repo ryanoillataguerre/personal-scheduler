@@ -26,6 +26,14 @@ export interface SchedTask {
   maxChunkMin?: number | null;
   /** Most minutes to place on any one day. */
   maxPerDayMin?: number | null;
+  /** Only place on these days (keyed like Window.day). Used by habits kept to certain weekdays. */
+  onlyDays?: string[] | null;
+  /**
+   * The task keeps its own hours: it is placed only inside these intervals,
+   * whether or not they fall in the working hours, and block names do not
+   * apply to it. Used by habits with a set time of day.
+   */
+  ownWindows?: (Interval & { day?: string })[] | null;
   /** Minutes already done or under way per day (keyed like Window.day), counted against the daily cap. */
   usedByDay?: Record<string, number>;
 }
@@ -170,11 +178,26 @@ export function schedule(input: ScheduleInput): ScheduleResult {
     return slots.sort((a, b) => a.start - b.start);
   };
 
+  /** Remove an interval from the free slots, splitting any slot it lands in. */
+  const carve = (slots: Window[], cut: Interval) => {
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      if (cut.end <= s.start || cut.start >= s.end) continue;
+      const pieces: Window[] = [];
+      if (cut.start > s.start) pieces.push({ ...s, end: cut.start });
+      if (cut.end < s.end) pieces.push({ ...s, start: cut.end });
+      slots.splice(i, 1, ...pieces);
+      i += pieces.length - 1;
+    }
+  };
+
   /** Place tasks in the given order, each into the earliest time that fits. */
   const place = (order: SchedTask[]) => {
     const slots = freeSlots();
     const blocks: PlannedBlock[] = [];
     const unscheduled: { taskId: number; minutes: number }[] = [];
+    // Everything placed so far, so tasks that keep their own hours can avoid it.
+    const taken: Interval[] = [];
 
     for (const task of order) {
       let remaining = Math.ceil(task.remainingMin / granMin) * granMin;
@@ -185,11 +208,39 @@ export function schedule(input: ScheduleInput): ScheduleResult {
       const maxChunk = task.maxChunkMin ? Math.max(minChunk, task.maxChunkMin) : Infinity;
       const perDay = task.maxPerDayMin ?? Infinity;
       const used: Record<string, number> = { ...(task.usedByDay ?? {}) };
+      const onlyDays = task.onlyDays ? new Set(task.onlyDays) : null;
 
-      for (let i = 0; i < slots.length && remaining > 0; i++) {
+      // A task with its own hours is placed inside them directly. It does not
+      // need working hours there, but it does avoid calendar events and
+      // anything already placed, and it takes its time out of the free slots.
+      const own = task.ownWindows ? [...task.ownWindows].sort((a, b) => a.start - b.start) : null;
+      for (const w of own ?? []) {
+        if (remaining <= 0) break;
+        const lo = Math.max(w.start, from, notBefore);
+        const hi = Math.min(w.end, notAfter);
+        if (hi <= lo) continue;
+        const day = w.day ?? "";
+        for (const piece of subtract({ start: lo, end: hi }, [...input.busy, ...taken])) {
+          const start = ceilTo(piece.start, gran);
+          const limit = floorTo(piece.end, gran);
+          const dayLeft = perDay - (used[day] ?? 0);
+          if (remaining <= 0 || limit <= start || dayLeft <= 0) continue;
+          const chunk = chunkFor(remaining, minChunk, Math.min((limit - start) / MIN, dayLeft, maxChunk));
+          if (chunk <= 0) continue;
+          const end = start + chunk * MIN;
+          blocks.push({ taskId: task.id, start, end });
+          remaining -= chunk;
+          used[day] = (used[day] ?? 0) + chunk;
+          taken.push({ start, end: end + buffer });
+          carve(slots, { start, end: end + buffer });
+        }
+      }
+
+      for (let i = 0; !own && i < slots.length && remaining > 0; i++) {
         const slot = slots[i];
         if (slot.start >= notAfter) break; // slots are in time order
         if (!fits(task, slot)) continue;
+        if (onlyDays && !onlyDays.has(slot.day ?? "")) continue;
         const start = Math.max(slot.start, notBefore);
         const limit = Math.min(slot.end, notAfter);
         if (start >= limit) continue;
@@ -203,6 +254,7 @@ export function schedule(input: ScheduleInput): ScheduleResult {
         blocks.push({ taskId: task.id, start, end });
         remaining -= chunk;
         used[day] = (used[day] ?? 0) + chunk;
+        taken.push({ start, end: end + buffer });
         // Keep whatever is left of the slot on either side of the new block.
         const after = { start: Math.min(slot.end, end + buffer), end: slot.end, name: slot.name, strict: slot.strict, day: slot.day };
         if (start > slot.start) {

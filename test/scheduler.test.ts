@@ -449,6 +449,51 @@ test("strict is kept only on named blocks when hours are saved", () => {
   assert.deepEqual(w.map((x) => [x.name, x.strict]), [["review", true], [null, false]]);
 });
 
+test("a task with its own hours is placed there, outside working hours and regardless of block names", () => {
+  const r = schedule({
+    now: at("2026-11-30T06:00"),
+    tasks: [
+      task(1, { priority: 3, remainingMin: 60, ownWindows: [{ start: at("2026-11-30T07:00"), end: at("2026-11-30T08:30"), day: "2026-11-30" }] }),
+      task(2, { priority: 1, remainingMin: 120 }),
+    ],
+    windows: [{ ...win("2026-11-30T09:00", "2026-11-30T12:00", "review"), strict: true }, win("2026-11-30T13:00", "2026-11-30T17:00")],
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["1@Mon 07:00-08:00", "2@Mon 13:00-15:00"]);
+});
+
+test("its own hours inside working hours are taken out of the free time, in priority order", () => {
+  const own = [{ start: at("2026-11-30T10:00"), end: at("2026-11-30T11:00"), day: "2026-11-30" }];
+  const windows = [win("2026-11-30T09:00", "2026-11-30T12:00")];
+  // The timed task ranks first: it holds 10:00, and the other works around it.
+  const first = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { priority: 1, remainingMin: 60, ownWindows: own }), task(2, { priority: 2, remainingMin: 120, minChunkMin: 30 })],
+    windows,
+    busy: [],
+  });
+  assert.deepEqual(show(first), ["2@Mon 09:00-10:00", "1@Mon 10:00-11:00", "2@Mon 11:00-12:00"]);
+  // The timed task ranks last: the other work has already taken 10:00, so it finds no room.
+  const last = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { priority: 3, remainingMin: 60, ownWindows: own }), task(2, { priority: 2, remainingMin: 180 })],
+    windows,
+    busy: [],
+  });
+  assert.deepEqual(show(last), ["2@Mon 09:00-12:00"]);
+  assert.deepEqual(last.unscheduled, [{ taskId: 1, minutes: 60 }]);
+});
+
+test("a task kept to certain days skips the others", () => {
+  const r = schedule({
+    now: at("2026-11-30T08:00"),
+    tasks: [task(1, { remainingMin: 120, minChunkMin: 60, maxPerDayMin: 60, onlyDays: ["2026-12-01", "2026-12-02"] })],
+    windows: week,
+    busy: [],
+  });
+  assert.deepEqual(show(r), ["1@Tue 09:00-10:00", "1@Wed 09:00-10:00"]);
+});
+
 test("block lists are normalized from arrays and from the stored comma form", () => {
   assert.deepEqual(normBlocks([" Focus", "home", "focus", ""]), ["focus", "home"]);
   assert.deepEqual(normBlocks("home,focus"), ["focus", "home"]);

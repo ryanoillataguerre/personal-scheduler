@@ -27,20 +27,49 @@ export function periodsFor(kind: HabitKind, now: number, zone: string, horizonDa
   return out;
 }
 
+/** The ISO weekdays a habit is kept to, or null when any day will do. */
+export const habitWeekdays = (h: Pick<HabitRow, "days">): number[] | null => {
+  const list = (h.days ?? "").split(",").map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= 7);
+  return list.length ? list : null;
+};
+
+export interface HabitDay {
+  /** Local date, "YYYY-MM-DD". */
+  date: string;
+  /** The habit's set time on that day, when it has one. */
+  window: { start: number; end: number } | null;
+}
+
+/** The days inside [from, to) that a habit may be done on, with its set time if any. */
+export function habitDays(h: HabitRow, from: number, to: number, zone: string): HabitDay[] {
+  const weekdays = habitWeekdays(h);
+  const out: HabitDay[] = [];
+  for (let d = DateTime.fromMillis(from, { zone }).startOf("day"); d.toMillis() < to; d = d.plus({ days: 1 })) {
+    if (weekdays && !weekdays.includes(d.weekday)) continue;
+    let window: HabitDay["window"] = null;
+    if (h.time_from && h.time_to) {
+      const [fh, fm] = h.time_from.split(":").map(Number);
+      const [th, tm] = h.time_to.split(":").map(Number);
+      window = { start: d.set({ hour: fh, minute: fm }).toMillis(), end: d.set({ hour: th, minute: tm }).toMillis() };
+    }
+    out.push({ date: d.toISODate()!, window });
+  }
+  return out;
+}
+
 /**
  * Minutes a habit asks for in one period. A weekly habit created partway
- * through a week asks for a proportional share of that first week.
+ * through a week asks for a share of that first week, counted in the days it
+ * can still be done on.
  */
 export function targetFor(h: HabitRow, period: Period, zone: string): number {
-  if (h.kind === "daily") return h.session_min;
-  let daysLeft = 7;
-  if (h.created_at > period.start) {
-    const created = DateTime.fromMillis(h.created_at, { zone }).startOf("day");
-    daysLeft = Math.max(0, Math.round(DateTime.fromMillis(period.end, { zone }).diff(created, "days").days));
-  }
-  const share = Math.min(1, daysLeft / 7);
+  const all = habitDays(h, period.start, period.end, zone);
+  if (h.kind === "daily") return all.length ? h.session_min : 0; // not one of its days
+  const left = h.created_at > period.start ? habitDays(h, h.created_at, period.end, zone) : all;
+  if (!all.length || !left.length) return 0;
+  const share = left.length / all.length;
   if (h.kind === "days") {
-    return Math.min(h.days_per_week, daysLeft, Math.round(h.days_per_week * share)) * h.session_min;
+    return Math.min(h.days_per_week, left.length, Math.round(h.days_per_week * share)) * h.session_min;
   }
   const total = Math.round((h.weekly_min * share) / 5) * 5;
   return total < Math.min(h.min_chunk_min, h.weekly_min) ? 0 : total;
@@ -126,6 +155,11 @@ export interface HabitInput {
   maxPerDayMin: number | null;
   /** Named blocks of hours it may go in. Empty for any. */
   blocks: string[];
+  /** ISO weekdays it is kept to. Empty for any day. */
+  days: number[];
+  /** A set time of day, "HH:MM". Both null for none. */
+  timeFrom: string | null;
+  timeTo: string | null;
 }
 
 function int(v: unknown, name: string, min: number, max: number): number {
@@ -150,21 +184,58 @@ export function parseHabit(body: Record<string, unknown>, existing?: HabitRow): 
   const minChunkMin = Math.min(weeklyMin, int(body.minChunkMin ?? existing?.min_chunk_min ?? 30, "Smallest piece", 5, 720));
   const rawMax = body.maxPerDayMin === undefined ? existing?.max_per_day_min : body.maxPerDayMin;
   const maxPerDayMin = rawMax === null || rawMax === undefined || rawMax === "" ? null : int(rawMax, "Most in one day", 5, 1440);
-  if (kind === "hours" && maxPerDayMin !== null) {
-    if (maxPerDayMin < minChunkMin) throw new UserError("Most in one day can't be less than the smallest piece.");
-    if (maxPerDayMin * 7 < weeklyMin) throw new UserError("That daily limit can't reach the weekly total in seven days.");
+  // Days and a time of day it is kept to.
+  const rawDays = body.days === undefined ? (existing?.days ?? "").split(",").filter(Boolean) : body.days;
+  if (!Array.isArray(rawDays)) throw new UserError("Days must be a list of weekdays.");
+  const days = [...new Set(rawDays.map((d) => int(d, "Day", 1, 7)))].sort();
+  const dayCount = days.length || 7;
+  const clock = (v: unknown, fallback: string | null | undefined) => {
+    const raw = v === undefined ? fallback : v;
+    if (raw === null || raw === undefined || raw === "") return null;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(raw))) throw new UserError("Times must look like 17:15.");
+    return String(raw);
+  };
+  const timeFrom = clock(body.timeFrom, existing?.time_from);
+  const timeTo = clock(body.timeTo, existing?.time_to);
+  if ((timeFrom === null) !== (timeTo === null)) throw new UserError("Set both a start and an end time, or neither.");
+  let windowMin = Infinity;
+  if (timeFrom && timeTo) {
+    const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+    windowMin = mins(timeTo) - mins(timeFrom);
+    if (windowMin <= 0) throw new UserError("The end time must be after the start time.");
   }
-  const blocks = normBlocks(body.blocks === undefined ? existing?.blocks : body.blocks);
-  return { title, kind, priority, sessionMin, daysPerWeek, weeklyMin, minChunkMin, maxPerDayMin, blocks };
+
+  if (kind === "hours") {
+    if (maxPerDayMin !== null && maxPerDayMin < minChunkMin) {
+      throw new UserError("Most in one day can't be less than the smallest piece.");
+    }
+    if (windowMin < minChunkMin) throw new UserError("That time window is shorter than the smallest piece.");
+    const perDay = Math.min(maxPerDayMin ?? Infinity, windowMin);
+    if (perDay * dayCount < weeklyMin) {
+      throw new UserError("Those days and limits can't reach the weekly total. Add days, widen the time, or lower the total.");
+    }
+  } else {
+    if (windowMin < sessionMin) throw new UserError("That time window is shorter than one sitting.");
+    if (kind === "days" && dayCount < daysPerWeek) {
+      throw new UserError(`Pick at least ${daysPerWeek} days, or lower the days a week.`);
+    }
+  }
+  // A set time replaces named blocks: the habit goes exactly then.
+  const blocks = timeFrom ? [] : normBlocks(body.blocks === undefined ? existing?.blocks : body.blocks);
+  return { title, kind, priority, sessionMin, daysPerWeek, weeklyMin, minChunkMin, maxPerDayMin, blocks, days, timeFrom, timeTo };
 }
 
 export function createHabit(h: HabitInput, now = Date.now()): number {
   const r = db
     .prepare(
       `INSERT INTO habits (title, kind, priority, session_min, days_per_week, weekly_min, min_chunk_min,
-                           max_per_day_min, blocks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                           max_per_day_min, blocks, days, time_from, time_to, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(h.title, h.kind, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin, h.blocks.join(",") || null, now);
+    .run(
+      h.title, h.kind, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin,
+      h.blocks.join(",") || null, h.days.join(",") || null, h.timeFrom, h.timeTo, now,
+    );
   return Number(r.lastInsertRowid);
 }
 
@@ -173,8 +244,11 @@ export const getHabit = (id: number) => db.prepare("SELECT * FROM habits WHERE i
 export function updateHabit(id: number, h: HabitInput): void {
   db.prepare(
     `UPDATE habits SET title = ?, priority = ?, session_min = ?, days_per_week = ?, weekly_min = ?,
-                       min_chunk_min = ?, max_per_day_min = ?, blocks = ? WHERE id = ?`,
-  ).run(h.title, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin, h.blocks.join(",") || null, id);
+                       min_chunk_min = ?, max_per_day_min = ?, blocks = ?, days = ?, time_from = ?, time_to = ? WHERE id = ?`,
+  ).run(
+    h.title, h.priority, h.sessionMin, h.daysPerWeek, h.weeklyMin, h.minChunkMin, h.maxPerDayMin,
+    h.blocks.join(",") || null, h.days.join(",") || null, h.timeFrom, h.timeTo, id,
+  );
 }
 
 /** Take a habit's unfinished occurrences off the plan. */
