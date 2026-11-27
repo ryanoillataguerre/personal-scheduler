@@ -2,6 +2,8 @@
 // now, save it, and push the difference to Google Calendar.
 import { db, getHours, getKv, getSettings, removeBlock, setKv, tx, type BlockRow, type TaskRow } from "./db.js";
 import { fetchBusy, syncEvents } from "./google.js";
+import { DateTime } from "luxon";
+import { syncHabits } from "./habits.js";
 import { expandWindows } from "./hours.js";
 import { schedule, type Interval, type SchedTask } from "./scheduler.js";
 
@@ -41,24 +43,44 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
     }
     if (missed.length) lastMissed = { at: now, count: missed.length };
 
-    // 2. Blocks already under way (or ended but still in grace) stay put.
+    // 2. Habits: create the coming days' and weeks' occurrences, and lapse the
+    //    ones whose day or week has ended.
+    syncHabits(now, s);
+
+    // 3. Blocks already under way (or ended but still in grace) stay put.
     const pinned = db
       .prepare("SELECT * FROM blocks WHERE status = 'planned' AND start <= ?")
       .all(now) as BlockRow[];
     const pinnedMin = new Map<number, number>();
     for (const b of pinned) pinnedMin.set(b.task_id, (pinnedMin.get(b.task_id) ?? 0) + (b.end - b.start) / MIN);
 
-    // 3. Plan everything that is left.
+    // 4. Plan everything that is left.
     const tasks = db.prepare("SELECT * FROM tasks WHERE status = 'open'").all() as TaskRow[];
-    const schedTasks: SchedTask[] = tasks.map((t) => ({
-      id: t.id,
-      priority: t.priority,
-      remainingMin: Math.max(0, t.duration_min - t.done_min - (pinnedMin.get(t.id) ?? 0)),
-      minChunkMin: t.min_chunk_min,
-      location: t.location,
-      createdAt: t.created_at,
-      notBefore: t.not_before,
-    }));
+    const counted = db.prepare("SELECT * FROM blocks WHERE task_id = ? AND (status = 'done' OR start <= ?)");
+    const schedTasks: SchedTask[] = tasks.map((t) => {
+      // A daily cap has to count what was already done or is under way today.
+      let usedByDay: Record<string, number> | undefined;
+      if (t.max_per_day_min) {
+        usedByDay = {};
+        for (const b of counted.all(t.id, now) as BlockRow[]) {
+          const day = DateTime.fromMillis(b.start, { zone: s.zone }).toISODate()!;
+          usedByDay[day] = (usedByDay[day] ?? 0) + (b.credit_min ?? (b.end - b.start) / MIN);
+        }
+      }
+      return {
+        id: t.id,
+        priority: t.priority,
+        remainingMin: Math.max(0, t.duration_min - t.done_min - (pinnedMin.get(t.id) ?? 0)),
+        minChunkMin: t.min_chunk_min,
+        location: t.location,
+        createdAt: t.created_at,
+        notBefore: Math.max(t.not_before ?? 0, t.period_start ?? 0) || null,
+        notAfter: t.period_end,
+        maxChunkMin: t.max_chunk_min,
+        maxPerDayMin: t.max_per_day_min,
+        usedByDay,
+      };
+    });
     const windows = expandWindows(getHours(), now, s.zone, s.horizonDays);
     const blocked: Interval[] = [...busy, ...pinned.map((b) => ({ start: b.start, end: b.end + s.bufferMin * MIN }))];
     const result = schedule({
@@ -70,7 +92,7 @@ export function planNow(now: number, busy: Interval[]): PlanInfo {
       bufferMin: s.bufferMin,
     });
 
-    // 4. Save the difference, so unchanged blocks keep their calendar events.
+    // 5. Save the difference, so unchanged blocks keep their calendar events.
     const future = db
       .prepare("SELECT * FROM blocks WHERE status = 'planned' AND start > ?")
       .all(now) as BlockRow[];
@@ -133,14 +155,21 @@ export function completeBlock(id: number, now = Date.now()): void {
   if (!b || b.status !== "planned") throw new UserError("That block is no longer on the plan.");
   const minutes = Math.round((b.end - b.start) / MIN);
   tx(() => {
+    const step = GRANULARITY_MIN * MIN;
     if (b.start > now) {
-      // Done ahead of time: free the slot instead of leaving a record in the future.
-      removeBlock(b);
+      // Done ahead of time: free the slot, and record the work as just finished
+      // so it shows as done today and counts toward a habit's daily limit.
+      const end = Math.floor(now / step) * step;
+      db.prepare("UPDATE blocks SET status = 'done', start = ?, end = ?, credit_min = ?, synced = 0 WHERE id = ?").run(
+        end - minutes * MIN,
+        end,
+        minutes,
+        b.id,
+      );
     } else {
       // Finished early: give the rest of the slot back.
-      const step = GRANULARITY_MIN * MIN;
       const end = Math.min(b.end, Math.max(b.start + step, Math.ceil(now / step) * step));
-      db.prepare("UPDATE blocks SET status = 'done', end = ?, synced = 0 WHERE id = ?").run(end, b.id);
+      db.prepare("UPDATE blocks SET status = 'done', end = ?, credit_min = ?, synced = 0 WHERE id = ?").run(end, minutes, b.id);
     }
     db.prepare("UPDATE tasks SET done_min = done_min + ? WHERE id = ?").run(minutes, b.task_id);
     const t = getTask(b.task_id)!;

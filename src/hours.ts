@@ -83,7 +83,7 @@ export function expandWindows(hours: Hours, now: number, zone: string, days: num
       // Building from the calendar date keeps this correct across DST changes.
       const start = day.set({ hour: sh, minute: sm }).toMillis();
       const end = day.set({ hour: eh, minute: em }).toMillis();
-      if (end > start) out.push({ start, end, location: normLoc(r.location) });
+      if (end > start) out.push({ start, end, location: normLoc(r.location), day: date });
     }
   }
   return out;

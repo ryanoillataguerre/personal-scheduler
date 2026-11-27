@@ -81,6 +81,7 @@ const taskById = () => Object.fromEntries(S.tasks.map((t) => [t.id, t]));
 const places = () =>
   [...new Set([
     ...S.tasks.map((t) => t.location),
+    ...S.habits.map((h) => h.location),
     ...Object.values(S.hours.weekly).flat().map((r) => r.location),
     ...Object.values(S.hours.overrides).flat().map((r) => r.location),
   ].filter(Boolean))].sort();
@@ -92,7 +93,8 @@ function notices() {
   const tasks = taskById();
   if (S.google.error) out.push(`Google Calendar: ${esc(S.google.error)}`);
   else if (!S.google.connected) out.push(`Not connected to Google Calendar, so blocks only show here. <a href="#settings">Connect it in Settings.</a>`);
-  const un = S.plan.unscheduled.filter((u) => tasks[u.taskId]);
+  // Habits that don't fit report it on their own tab, not here.
+  const un = S.plan.unscheduled.filter((u) => tasks[u.taskId] && !tasks[u.taskId].habitId);
   if (un.length) {
     const names = un.map((u) => `${esc(tasks[u.taskId].title)} (${dur(u.minutes)})`).join(", ");
     out.push(`No room in the next ${S.settings.horizonDays} days for: ${names}. Add hours, tag hours with the place it needs, or shorten its minimum piece.`);
@@ -113,7 +115,7 @@ function blockHtml(b, t) {
       ? `<button class="btn" data-do="done">Done</button><button class="btn ghost" data-do="skip">Not now</button>`
       : ask
         ? `<button class="btn" data-do="done">I did it</button><button class="btn ghost" data-do="skip">Didn't do it</button>`
-        : `<button class="btn" data-do="done">Done already</button><button class="btn ghost" data-do="edit">Edit task</button>`;
+        : `<button class="btn" data-do="done">Done already</button><button class="btn ghost" data-do="edit">${t.habitId ? "Edit habit" : "Edit task"}</button>`;
     actions = `<div class="actions">${actions}</div>`;
   }
   const lead = ask ? "Did you do this? " : live ? "Now, " : "";
@@ -144,7 +146,7 @@ function planView() {
     return html + `<div class="empty"><p>${
       hasOpen
         ? "Your tasks don't fit anywhere yet. Check your hours and the places they're tagged with."
-        : "No tasks yet. Add one with the + button and it's placed into your next open hours."
+        : "Nothing to plan yet. Add a task with the + button, or a habit on the Habits tab."
     }</p></div>`;
   }
   let current = null;
@@ -164,8 +166,8 @@ function planView() {
 // ---- Tasks -----------------------------------------------------------------
 
 function tasksView() {
-  const open = S.tasks.filter((t) => t.status === "open");
-  const finished = S.tasks.filter((t) => t.status === "done").sort((a, b) => b.completedAt - a.completedAt);
+  const open = S.tasks.filter((t) => t.status === "open" && !t.habitId);
+  const finished = S.tasks.filter((t) => t.status === "done" && !t.habitId).sort((a, b) => b.completedAt - a.completedAt);
   const next = {};
   for (const b of S.blocks) if (b.status === "planned" && !(b.taskId in next)) next[b.taskId] = b.start;
   const total = open.reduce((s, t) => s + Math.max(0, t.durationMin - t.doneMin), 0);
@@ -248,6 +250,134 @@ function taskSheet(t) {
   });
   sheet.showModal();
   if (isNew) $("#f-title").focus();
+}
+
+// ---- Habits ----------------------------------------------------------------
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function habitRepeats(h) {
+  if (h.kind === "daily") return `Every day, ${dur(h.sessionMin)}`;
+  if (h.kind === "days") return `${plural(h.daysPerWeek, "day")} a week, ${dur(h.sessionMin)} each`;
+  return `${dur(h.weeklyMin)} a week${h.maxPerDayMin ? `, up to ${dur(h.maxPerDayMin)} a day` : ""}`;
+}
+
+function habitStatus(h) {
+  const p = h.progress;
+  if (!h.active) return ["Paused", ""];
+  const span = h.kind === "daily" ? "today" : "this week";
+  let week;
+  if (!p.weekTargetMin) week = "Starts next week";
+  else if (h.kind === "hours") week = `This week: ${dur(p.weekDoneMin)} of ${dur(p.weekTargetMin)}`;
+  else week = `This week: ${Math.floor(p.weekDoneMin / h.sessionMin)} of ${plural(Math.round(p.weekTargetMin / h.sessionMin), "day")}`;
+  let next;
+  if (p.noRoomMin > 0) next = h.kind === "hours" ? `No room for ${dur(p.noRoomMin)} of it ${span}` : `No room left ${span}`;
+  else if (p.current === "done") next = `Done for ${span}`;
+  else if (p.nextStart) next = `Next: ${when(p.nextStart)}`;
+  else next = "Nothing planned";
+  if (p.current === "done" && p.nextStart) next += `, next ${when(p.nextStart)}`;
+  return [week, next];
+}
+
+function habitsView() {
+  let html = `<h1>Habits</h1><p class="sub">Work that repeats. It's planned into your hours like a task, and what isn't done by the end of its day or week lapses instead of piling up.</p>`;
+  if (!S.habits.length) {
+    return html + `<div class="empty"><p>No habits yet. Add one with the + button: something for every day, for a few days a week, or for a number of hours a week.</p></div>`;
+  }
+  for (const h of S.habits) {
+    const [week, next] = habitStatus(h);
+    const pct = h.progress.weekTargetMin ? Math.min(100, (h.progress.weekDoneMin / h.progress.weekTargetMin) * 100) : 0;
+    html += `<button class="task p${h.priority} ${h.active ? "" : "paused"}" data-habit="${h.id}">
+      <span class="pri" aria-label="Priority ${h.priority}, ${PRIORITY[h.priority]}">${h.priority}</span>
+      <span><span class="title">${esc(h.title)}</span>
+        <span class="meta">${esc([habitRepeats(h), h.location].filter(Boolean).join(", "))}</span>
+        <span class="meta">${esc(week)}</span>
+        ${next ? `<span class="meta">${esc(next)}</span>` : ""}
+        ${h.active && pct ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}</span>
+    </button>`;
+  }
+  return html;
+}
+
+function habitSheet(h) {
+  const isNew = !h;
+  h = h || { title: "", kind: "daily", priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, location: "", active: true };
+  const kinds = [["daily", "Every day"], ["days", "Days a week"], ["hours", "Hours a week"]];
+  sheet.innerHTML = `<form method="dialog">
+    <h2>${isNew ? "New habit" : "Edit habit"}</h2>
+    <label for="h-title">What you want to keep doing</label>
+    <input id="h-title" name="title" type="text" value="${esc(h.title)}" maxlength="200" required autocomplete="off">
+    <span class="label" id="l-kind">Repeats</span>
+    ${isNew
+      ? `<div class="picks three" role="radiogroup" aria-labelledby="l-kind">${kinds.map(([k, l]) => `<label class="pick k"><input type="radio" name="kind" value="${k}" ${h.kind === k ? "checked" : ""}><span>${l}</span></label>`).join("")}</div>`
+      : `<p class="hint" style="margin:0">${kinds.find(([k]) => k === h.kind)[1]}. To change this, delete the habit and add a new one.</p><input type="hidden" name="kind" value="${h.kind}">`}
+    <div class="row" data-for="daily days">
+      <div data-for="days"><label for="h-days">Days a week</label>
+        <input id="h-days" name="daysPerWeek" type="number" inputmode="numeric" min="1" max="7" value="${h.daysPerWeek}"></div>
+      <div><label for="h-session">Time each day</label>
+        <div class="unit"><input id="h-session" name="sessionMin" type="number" inputmode="numeric" min="5" max="720" step="5" value="${h.sessionMin}"><span>min</span></div></div>
+    </div>
+    <div data-for="hours">
+      <label for="h-weekly">Hours a week</label>
+      <div class="unit"><input id="h-weekly" name="weeklyHours" type="number" inputmode="decimal" min="0.25" max="100" step="0.25" value="${h.weeklyMin / 60}"><span>h</span></div>
+      <div class="row">
+        <div><label for="h-chunk">Smallest piece</label>
+          <div class="unit"><input id="h-chunk" name="minChunkMin" type="number" inputmode="numeric" min="5" max="720" step="5" value="${h.minChunkMin}"><span>min</span></div></div>
+        <div><label for="h-max">Most in one day</label>
+          <div class="unit"><input id="h-max" name="maxPerDayMin" type="number" inputmode="numeric" min="5" max="1440" step="5" value="${h.maxPerDayMin ?? ""}" placeholder="No limit"><span>min</span></div></div>
+      </div>
+    </div>
+    <p class="hint" data-for="daily">Planned once a day. If the day ends without it, that day is skipped; it doesn't carry over.</p>
+    <p class="hint" data-for="days">One sitting a day, on that many different days between Monday and Sunday. A missed sitting moves to a later day that week.</p>
+    <p class="hint" data-for="hours">Spread across Monday to Sunday in pieces no shorter than the smallest piece. Without a daily limit it's planned as early in the week as it fits.</p>
+    <span class="label" id="l-hpri">Priority</span>
+    <div class="picks" role="radiogroup" aria-labelledby="l-hpri">
+      ${[1, 2, 3, 4].map((p) => `<label class="pick p${p}"><input type="radio" name="priority" value="${p}" ${h.priority === p ? "checked" : ""}><span><b>${p}</b>${PRIORITY[p]}</span></label>`).join("")}
+    </div>
+    <label for="h-loc">Where it has to happen</label>
+    <input id="h-loc" name="location" type="text" value="${esc(h.location ?? "")}" list="places" placeholder="Anywhere" autocapitalize="none" autocomplete="off">
+    <datalist id="places">${places().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
+    <div class="foot">
+      <button class="btn" value="save">${isNew ? "Add habit" : "Save changes"}</button>
+      ${isNew ? "" : `<button class="btn ghost" value="${h.active ? "pause" : "resume"}" formnovalidate>${h.active ? "Pause" : "Resume"}</button>
+      <button class="btn danger" value="delete" formnovalidate>Delete</button>`}
+      <button class="btn ghost" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>`;
+  const form = $("form", sheet);
+  const showKind = () => {
+    const kind = new FormData(form).get("kind");
+    for (const el of form.querySelectorAll("[data-for]")) el.hidden = !el.dataset.for.split(" ").includes(kind);
+  };
+  form.addEventListener("change", (e) => e.target.name === "kind" && showKind());
+  showKind();
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const what = e.submitter?.value;
+    if (what === "cancel") return sheet.close();
+    const f = new FormData(form);
+    const max = String(f.get("maxPerDayMin") ?? "").trim();
+    const body = {
+      title: f.get("title"),
+      kind: f.get("kind"),
+      priority: Number(f.get("priority")),
+      sessionMin: Number(f.get("sessionMin")),
+      daysPerWeek: Number(f.get("daysPerWeek")),
+      weeklyMin: Math.round((Number(f.get("weeklyHours")) * 60) / 5) * 5,
+      minChunkMin: Number(f.get("minChunkMin")),
+      maxPerDayMin: max === "" ? null : Number(max),
+      location: f.get("location"),
+    };
+    let ok;
+    if (what === "delete") ok = confirm(`Delete "${h.title}"? Its planned blocks are removed; finished ones stay.`) && (await act("DELETE", `/api/habits/${h.id}`, null, "Deleted"));
+    else if (what === "pause") ok = await act("POST", `/api/habits/${h.id}/pause`, null, "Paused");
+    else if (what === "resume") ok = await act("POST", `/api/habits/${h.id}/resume`, null, "Resumed and planned");
+    else if (isNew) ok = await act("POST", "/api/habits", body, "Added and planned");
+    else ok = await act("PATCH", `/api/habits/${h.id}`, body, "Saved");
+    if (ok) sheet.close();
+  });
+  sheet.showModal();
+  if (isNew) $("#h-title").focus();
 }
 
 // ---- Hours -----------------------------------------------------------------
@@ -390,7 +520,7 @@ function render(force = false) {
   if (t !== "hours" && !hoursDirty()) hoursDraft = null;
   const keep = document.activeElement?.closest?.(".range");
   const focus = keep && { scope: keep.dataset.scope, key: keep.dataset.key, i: keep.dataset.i, f: document.activeElement.dataset.f };
-  view.innerHTML = { plan: planView, tasks: tasksView, hours: hoursView, settings: settingsView }[t]?.() ?? planView();
+  view.innerHTML = { plan: planView, tasks: tasksView, habits: habitsView, hours: hoursView, settings: settingsView }[t]?.() ?? planView();
   for (const a of document.querySelectorAll(".tabs a")) {
     if (a.dataset.tab === t) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -400,17 +530,22 @@ function render(force = false) {
 }
 
 view.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-do],[data-edit],[data-h],[data-s],.block .body[role=button]");
+  const el = e.target.closest("[data-do],[data-edit],[data-habit],[data-h],[data-s],.block .body[role=button]");
   if (!el) return;
   if (el.dataset.do) {
     const block = el.closest(".block");
     const id = block.dataset.block;
-    if (el.dataset.do === "edit") return taskSheet(S.tasks.find((t) => t.id === Number(block.dataset.task)));
+    if (el.dataset.do === "edit") {
+      const task = S.tasks.find((t) => t.id === Number(block.dataset.task));
+      const habit = task.habitId && S.habits.find((h) => h.id === task.habitId);
+      return habit ? habitSheet(habit) : taskSheet(task);
+    }
     el.disabled = true;
     openBlock = null;
     return act("POST", `/api/blocks/${id}/${el.dataset.do}`, null, el.dataset.do === "done" ? "Done" : "Moved to a later slot");
   }
   if (el.dataset.edit) return taskSheet(S.tasks.find((t) => t.id === Number(el.dataset.edit)));
+  if (el.dataset.habit) return habitSheet(S.habits.find((h) => h.id === Number(el.dataset.habit)));
   if (el.dataset.h) return hoursClick(el);
   if (el.dataset.s === "replan") return act("POST", "/api/replan", null, "Plan updated");
   if (el.dataset.s === "disconnect") return confirm("Disconnect Google Calendar? Events already on the calendar stay there.") && act("POST", "/api/google/disconnect", null, "Disconnected");
@@ -436,7 +571,7 @@ view.addEventListener("submit", (e) => {
   e.preventDefault();
   saveSettings(e.target);
 });
-$("#add").addEventListener("click", () => taskSheet(null));
+$("#add").addEventListener("click", () => (tab() === "habits" ? habitSheet(null) : taskSheet(null)));
 sheet.addEventListener("click", (e) => e.target === sheet && sheet.close());
 addEventListener("hashchange", () => render(true));
 document.addEventListener("visibilitychange", () => !document.hidden && refresh());

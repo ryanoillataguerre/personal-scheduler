@@ -11,6 +11,22 @@ Each task has:
 
 You set working hours per weekday, with one-off changes for single dates, and can tag each stretch of hours with a place. A task that needs a place is only planned into hours tagged with that place. Hours with no tag take only tasks that need no place.
 
+## Habits
+
+A habit is work that repeats. It is planned into your hours like a task and ranks against tasks by the same priority. There are three kinds:
+
+| Kind | You set | How it is planned |
+| --- | --- | --- |
+| Every day | time each day | One sitting a day |
+| Days a week | number of days, time each day | One sitting a day, on that many different days from Monday to Sunday |
+| Hours a week | weekly total, smallest piece, optional most-in-one-day | Pieces across Monday to Sunday, earliest first, up to the daily limit |
+
+A missed sitting is planned again later in the same day or week, like any missed block. What is still undone when the day or week ends lapses; it does not carry over, so a bad week does not leave a pile behind it.
+
+A weekly habit added partway through a week asks for a proportional share of that first week. Within a priority, habits are placed before open-ended tasks because they have a deadline.
+
+How a habit repeats cannot be changed after it is created; delete it and add a new one. Pausing a habit takes its blocks off the plan until you resume it.
+
 ## How planning works
 
 Every 5 minutes, and after every change, Dayloop rebuilds the plan from the current time:
@@ -95,10 +111,11 @@ npm test        # scheduler and planning-loop tests
 | `src/scheduler.ts` | The planning algorithm. Pure function, no I/O. |
 | `src/hours.ts` | Turns weekly hours and one-off days into time windows |
 | `src/planner.ts` | The loop: sweep missed blocks, plan, save, sync |
+| `src/habits.ts` | Turns habits into per-day and per-week task rows; progress |
 | `src/google.ts` | Sign-in, busy time, calendar events |
 | `src/server.ts` | HTTP API and static files |
 | `public/` | The phone app, plain JavaScript |
 
 ## Tested and not tested
 
-The scheduler, the missed-block loop, the HTTP API and the phone app were tested, the app in a phone-sized Chrome. The Google Calendar code was written against the API documentation but has not been run against a live Google account, and the Docker image has not been built (its build steps were replayed by hand on Node 22). Expect to debug those two on first run.
+The scheduler, the missed-block loop, habits, the HTTP API and the phone app were tested, the app in a phone-sized Chrome. The Google Calendar code was written against the API documentation but has not been run against a live Google account, and the Docker image has not been built (its build steps were replayed by hand on Node 22). Expect to debug those two on first run.

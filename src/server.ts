@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DateTime, IANAZone } from "luxon";
-import { db, getHours, getSettings, saveHours, saveSettings, type BlockRow, type Settings, type TaskRow } from "./db.js";
+import { db, getHours, getSettings, saveHours, saveSettings, type BlockRow, type HabitRow, type Settings, type TaskRow } from "./db.js";
 import {
   authUrl,
   disconnect,
@@ -13,6 +13,7 @@ import {
   listCalendars,
   redirectUri,
 } from "./google.js";
+import { createHabit, deleteHabit, getHabit, habitProgress, parseHabit, setHabitActive, updateHabit } from "./habits.js";
 import { parseHours, pruneOverrides } from "./hours.js";
 import {
   completeBlock,
@@ -86,15 +87,43 @@ const publicTask = (t: TaskRow) => ({
   missedCount: t.missed_count,
   createdAt: t.created_at,
   completedAt: t.completed_at,
+  habitId: t.habit_id,
+});
+
+const publicHabit = (h: HabitRow) => ({
+  id: h.id,
+  title: h.title,
+  kind: h.kind,
+  priority: h.priority,
+  sessionMin: h.session_min,
+  daysPerWeek: h.days_per_week,
+  weeklyMin: h.weekly_min,
+  minChunkMin: h.min_chunk_min,
+  maxPerDayMin: h.max_per_day_min,
+  location: h.location,
+  active: h.active === 1,
 });
 
 async function state() {
   const s = getSettings();
   const now = Date.now();
   const dayStart = DateTime.fromMillis(now, { zone: s.zone }).startOf("day").toMillis();
+  // One-off tasks that are open or recently finished, plus the habit
+  // occurrences that today's blocks and this week's progress refer to.
   const tasks = db
-    .prepare("SELECT * FROM tasks WHERE status = 'open' OR completed_at >= ? ORDER BY priority, created_at")
-    .all(now - 7 * 86_400_000) as TaskRow[];
+    .prepare(
+      `SELECT * FROM tasks
+       WHERE (habit_id IS NULL AND (status = 'open' OR completed_at >= ?))
+          OR (habit_id IS NOT NULL AND period_end > ?)
+       ORDER BY priority, created_at`,
+    )
+    .all(now - 7 * 86_400_000, dayStart) as TaskRow[];
+  const plan = getPlanInfo();
+  const unscheduled = new Map(plan.unscheduled.map((u) => [u.taskId, u.minutes]));
+  const habits = (db.prepare("SELECT * FROM habits ORDER BY priority, created_at").all() as HabitRow[]).map((h) => ({
+    ...publicHabit(h),
+    progress: habitProgress(h, now, s.zone, unscheduled),
+  }));
   const blocks = db
     .prepare("SELECT * FROM blocks WHERE end >= ? ORDER BY start")
     .all(dayStart) as BlockRow[];
@@ -110,10 +139,11 @@ async function state() {
   return {
     now,
     tasks: tasks.map(publicTask),
+    habits,
     blocks: blocks.map((b) => ({ id: b.id, taskId: b.task_id, start: b.start, end: b.end, status: b.status })),
     hours: getHours(),
     settings: s,
-    plan: getPlanInfo(),
+    plan,
     google: {
       configured: googleConfigured(),
       connected: googleConnected(),
@@ -157,6 +187,7 @@ app.patch(
   change((req) => {
     const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id(req)) as TaskRow | undefined;
     if (!existing) return bad("Task not found.");
+    if (existing.habit_id) return bad("This block comes from a habit. Edit the habit instead.");
     const t = parseTask(req.body ?? {}, existing);
     db.prepare(
       "UPDATE tasks SET title = ?, priority = ?, duration_min = ?, min_chunk_min = ?, location = ?, notes = ? WHERE id = ?",
@@ -171,6 +202,19 @@ app.post("/api/tasks/:id/done", change((req) => finishTask(id(req))));
 app.post("/api/tasks/:id/reopen", change((req) => reopenTask(id(req))));
 app.post("/api/blocks/:id/done", change((req) => completeBlock(id(req))));
 app.post("/api/blocks/:id/skip", change((req) => skipBlock(id(req))));
+
+app.post("/api/habits", change((req) => void createHabit(parseHabit(req.body ?? {}))));
+app.patch(
+  "/api/habits/:id",
+  change((req) => {
+    const existing = getHabit(id(req));
+    if (!existing) return bad("Habit not found.");
+    updateHabit(existing.id, parseHabit(req.body ?? {}, existing));
+  }),
+);
+app.delete("/api/habits/:id", change((req) => deleteHabit(id(req))));
+app.post("/api/habits/:id/pause", change((req) => setHabitActive(id(req), false)));
+app.post("/api/habits/:id/resume", change((req) => setHabitActive(id(req), true)));
 
 app.put(
   "/api/hours",
