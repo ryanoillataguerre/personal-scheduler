@@ -241,6 +241,23 @@ textarea { min-height: 4.5rem; resize: vertical; }
 }
 .chip input:checked + span { background: var(--ink); border-color: var(--ink); color: var(--paper); font-weight: 600; }
 .chip input:focus-visible + span { outline: 3px solid var(--p3); outline-offset: 2px; }
+.tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.35rem; }
+.tag {
+  font-size: 0.75rem; line-height: 1.35; padding: 0.1rem 0.5rem; border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent); color: var(--ink);
+}
+.block.now .tag { background: color-mix(in srgb, var(--on-color) 24%, transparent); color: inherit; }
+.block.done .tag, .task.finished .tag { color: var(--muted); }
+.tagadd { display: grid; grid-template-columns: 1fr auto; gap: 0.4rem; margin-top: 0.5rem; }
+#tag-chips:empty { display: none; }
+#tag-chips:empty + .tagadd { margin-top: 0; }
+.filter { display: flex; gap: 0.4rem; overflow-x: auto; margin: 0 -1rem 0.9rem; padding: 2px 1rem; scrollbar-width: none; }
+.filter::-webkit-scrollbar { display: none; }
+.fchip {
+  flex: none; border: 1.5px solid var(--line); background: transparent; color: var(--ink);
+  border-radius: 999px; padding: 0.35rem 0.9rem; min-height: 2.5rem; font-size: 0.9375rem;
+}
+.fchip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); font-weight: 600; }
 .check { display: flex; align-items: center; gap: 0.6rem; font-weight: 400; margin: 0; min-height: 2.75rem; }
 .check input { width: 1.25rem; height: 1.25rem; accent-color: var(--p3); }
 .card { background: var(--surface); border-radius: var(--radius); padding: 0.9rem; margin: 0 0 0.75rem; }

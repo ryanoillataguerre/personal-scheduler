@@ -37,6 +37,7 @@ import {
   UserError,
 } from "./planner.js";
 import { normBlocks } from "./scheduler.js";
+import { normTags, storeTags } from "./tags.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -86,7 +87,8 @@ function parseTask(body: Record<string, unknown>, existing?: TaskRow) {
   if (dueDate !== null && !(/^\d{4}-\d{2}-\d{2}$/.test(dueDate) && DateTime.fromISO(dueDate).isValid)) {
     bad("The deadline must be a date like 2026-12-04.");
   }
-  return { title, duration, priority, minChunk: Math.min(minChunk, duration), blocks, notes, dueDate };
+  const tags = storeTags(normTags(body.tags === undefined ? existing?.tags : body.tags));
+  return { title, duration, priority, minChunk: Math.min(minChunk, duration), blocks, notes, dueDate, tags };
 }
 
 const publicTask = (t: TaskRow) => ({
@@ -97,6 +99,7 @@ const publicTask = (t: TaskRow) => ({
   doneMin: t.done_min,
   minChunkMin: t.min_chunk_min,
   blocks: normBlocks(t.blocks),
+  tags: normTags(t.tags),
   notes: t.notes,
   status: t.status,
   missedCount: t.missed_count,
@@ -117,6 +120,7 @@ const publicHabit = (h: HabitRow) => ({
   minChunkMin: h.min_chunk_min,
   maxPerDayMin: h.max_per_day_min,
   blocks: normBlocks(h.blocks),
+  tags: normTags(h.tags),
   days: habitWeekdays(h) ?? [],
   timeFrom: h.time_from,
   timeTo: h.time_to,
@@ -197,8 +201,8 @@ app.post(
   change((req) => {
     const t = parseTask(req.body ?? {});
     db.prepare(
-      "INSERT INTO tasks (title, priority, duration_min, min_chunk_min, blocks, notes, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(t.title, t.priority, t.duration, t.minChunk, t.blocks, t.notes, t.dueDate, Date.now());
+      "INSERT INTO tasks (title, priority, duration_min, min_chunk_min, blocks, notes, due_date, tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(t.title, t.priority, t.duration, t.minChunk, t.blocks, t.notes, t.dueDate, t.tags, Date.now());
   }),
 );
 
@@ -210,8 +214,8 @@ app.patch(
     if (existing.habit_id) return bad("This block comes from a habit. Edit the habit instead.");
     const t = parseTask(req.body ?? {}, existing);
     db.prepare(
-      "UPDATE tasks SET title = ?, priority = ?, duration_min = ?, min_chunk_min = ?, blocks = ?, notes = ?, due_date = ? WHERE id = ?",
-    ).run(t.title, t.priority, t.duration, t.minChunk, t.blocks, t.notes, t.dueDate, existing.id);
+      "UPDATE tasks SET title = ?, priority = ?, duration_min = ?, min_chunk_min = ?, blocks = ?, notes = ?, due_date = ?, tags = ? WHERE id = ?",
+    ).run(t.title, t.priority, t.duration, t.minChunk, t.blocks, t.notes, t.dueDate, t.tags, existing.id);
     touchTask(existing.id);
     if (existing.status === "open" && existing.done_min >= t.duration) finishTask(existing.id);
   }),

@@ -132,6 +132,7 @@ function eventBody(block: BlockRow, task: TaskRow): calendar_v3.Schema$Event {
   const s = getSettings();
   const lines = [`Priority ${task.priority}`, `${task.done_min} of ${task.duration_min} min done`];
   if (task.due_date) lines.push(`Due ${task.due_date}`);
+  if (task.tags) lines.push(`Tags: ${task.tags.split(",").join(", ")}`);
   if (task.notes) lines.push("", task.notes);
   return {
     summary: (block.status === "done" ? "✓ " : "") + task.title,

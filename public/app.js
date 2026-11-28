@@ -114,6 +114,65 @@ function blockPicker(selected) {
     <p class="hint">Pick the blocks of hours it may go in. With none picked it can go anywhere in your hours, except blocks set to take only work that picks them.</p>`;
 }
 
+// ---- Tags ------------------------------------------------------------------
+
+let tagFilter = null; // show only work with this tag on the Tasks and Habits tabs
+
+const cleanTag = (raw) => String(raw).replace(/,/g, " ").replace(/^#+/, "").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 30).trim();
+/** Every tag in use, on one-off tasks and on habits. */
+const allTags = () =>
+  [...new Set([...S.tasks.filter((t) => !t.habitId).flatMap((t) => t.tags), ...S.habits.flatMap((h) => h.tags)])].sort();
+const tagPills = (tags) =>
+  tags.length ? `<span class="tags">${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</span>` : "";
+const tagChip = (name, on) =>
+  `<label class="chip"><input type="checkbox" name="tags" value="${esc(name)}" ${on ? "checked" : ""}><span>${esc(name)}</span></label>`;
+
+/** The filter in effect for a list: the chosen tag, if anything in the list still has it. */
+const activeTag = (items) => (tagFilter && items.some((i) => i.tags.includes(tagFilter)) ? tagFilter : null);
+
+/** A row of buttons to narrow a list to one tag. Nothing is drawn until a tag exists. */
+function tagFilterBar(items) {
+  const tags = [...new Set(items.flatMap((i) => i.tags))].sort();
+  if (!tags.length) return "";
+  const on = activeTag(items);
+  const chip = (value, label) =>
+    `<button class="fchip" type="button" data-tag="${esc(value)}" aria-pressed="${(on ?? "") === value}">${esc(label)}</button>`;
+  return `<div class="filter" role="group" aria-label="Show only one tag">${chip("", "All")}${tags.map((t) => chip(t, t)).join("")}</div>`;
+}
+
+/** Tag editing inside a sheet: tick existing tags, or type a new one. */
+function tagPicker(selected) {
+  const names = [...new Set([...allTags(), ...selected])].sort();
+  return `<span class="label" id="l-tags">Tags</span>
+    <div class="chips" id="tag-chips" role="group" aria-labelledby="l-tags">${names.map((n) => tagChip(n, selected.includes(n))).join("")}</div>
+    <div class="tagadd">
+      <input type="text" id="tag-new" placeholder="New tag" maxlength="30" autocapitalize="none" autocomplete="off" enterkeyhint="done" aria-label="New tag">
+      <button class="btn ghost" type="button" id="tag-add">Add tag</button>
+    </div>
+    <p class="hint">Tags group related work so you can filter by them. They don't change how anything is planned.</p>`;
+}
+
+/** Make the "New tag" field work. Returns a function that takes in whatever is still typed there. */
+function wireTags(form) {
+  const input = $("#tag-new", form);
+  const chips = $("#tag-chips", form);
+  const add = () => {
+    for (const name of input.value.split(",").map(cleanTag).filter(Boolean)) {
+      const existing = [...chips.querySelectorAll("input")].find((i) => i.value === name);
+      if (existing) existing.checked = true;
+      else chips.insertAdjacentHTML("beforeend", tagChip(name, true));
+    }
+    input.value = "";
+  };
+  $("#tag-add", form).addEventListener("click", add);
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== ",") return;
+    e.preventDefault(); // Enter here adds the tag; it must not save the whole sheet
+    add();
+  });
+  return add;
+}
+
 // ---- Plan ------------------------------------------------------------------
 
 function notices() {
@@ -157,6 +216,7 @@ function blockHtml(b, t) {
     <div class="body" ${b.status === "planned" && !live && !ask ? 'role="button" tabindex="0"' : ""}>
       <div class="title">${esc(t.title)}</div>
       <div class="meta">${lead}${esc(meta)}</div>
+      ${tagPills(t.tags)}
       ${due ? `<div class="meta ${due.warn ? "warn" : ""}">${esc(due.text)}</div>` : ""}${actions}
     </div>
   </div>`;
@@ -200,12 +260,16 @@ function planView() {
 // ---- Tasks -----------------------------------------------------------------
 
 function tasksView() {
-  const open = S.tasks.filter((t) => t.status === "open" && !t.habitId);
-  const finished = S.tasks.filter((t) => t.status === "done" && !t.habitId).sort((a, b) => b.completedAt - a.completedAt);
+  const mine = S.tasks.filter((t) => !t.habitId);
+  const tag = activeTag(mine);
+  const shown = tag ? mine.filter((t) => t.tags.includes(tag)) : mine;
+  const open = shown.filter((t) => t.status === "open");
+  const finished = shown.filter((t) => t.status === "done").sort((a, b) => b.completedAt - a.completedAt);
   const next = {};
   for (const b of S.blocks) if (b.status === "planned" && !(b.taskId in next)) next[b.taskId] = b.start;
   const total = open.reduce((s, t) => s + Math.max(0, t.durationMin - t.doneMin), 0);
-  let html = `<h1>Tasks</h1><p class="sub">${open.length ? `${open.length} open, ${dur(total)} left to do.` : "Nothing open."}</p>`;
+  const tagged = tag ? ` tagged ${esc(tag)}` : "";
+  let html = `<h1>Tasks</h1><p class="sub">${open.length ? `${open.length} open${tagged}, ${dur(total)} left to do.` : `Nothing open${tagged}.`}</p>${tagFilterBar(mine)}`;
   for (const t of open) {
     const missed = t.missedCount ? `, missed ${t.missedCount === 1 ? "once" : t.missedCount + " times"}` : "";
     const meta = [`${dur(t.durationMin - t.doneMin)} left`, blocksText(t.blocks)].filter(Boolean).join(", ") + missed;
@@ -215,6 +279,7 @@ function tasksView() {
         <span class="meta">${esc(meta)}</span>
         ${dueInfo(t) ? `<span class="meta ${dueInfo(t).warn ? "warn" : ""}">${esc(dueInfo(t).text)}</span>` : ""}
         <span class="meta">${next[t.id] ? "Next: " + esc(when(next[t.id])) : "No room in your hours yet"}</span>
+        ${tagPills(t.tags)}
         ${t.doneMin ? `<span class="bar"><i style="width:${Math.min(100, (t.doneMin / t.durationMin) * 100)}%"></i></span>` : ""}</span>
     </button>`;
   }
@@ -230,7 +295,7 @@ function tasksView() {
 
 function taskSheet(t) {
   const isNew = !t;
-  t = t || { title: "", priority: 2, durationMin: 60, minChunkMin: 30, blocks: [], notes: "", dueDate: null };
+  t = t || { title: "", priority: 2, durationMin: 60, minChunkMin: 30, blocks: [], tags: tagFilter ? [tagFilter] : [], notes: "", dueDate: null };
   sheet.innerHTML = `<form method="dialog">
     <h2>${isNew ? "New task" : "Edit task"}</h2>
     <label for="f-title">What needs doing</label>
@@ -250,6 +315,7 @@ function taskSheet(t) {
     <input id="f-due" name="dueDate" type="date" value="${esc(t.dueDate ?? "")}">
     <p class="hint">Optional. Done by the end of this day. If it's running out of time, it's planned ahead of everything else, whatever its priority.</p>
     ${blockPicker(t.blocks ?? [])}
+    ${tagPicker(t.tags ?? [])}
     <label for="f-notes">Notes</label>
     <textarea id="f-notes" name="notes" maxlength="2000">${esc(t.notes)}</textarea>
     <div class="foot">
@@ -262,10 +328,12 @@ function taskSheet(t) {
     </div>
   </form>`;
   const form = $("form", sheet);
+  const takeTypedTag = wireTags(form);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const what = e.submitter?.value;
     if (what === "cancel") return sheet.close();
+    takeTypedTag();
     const f = new FormData(form);
     const body = {
       title: f.get("title"),
@@ -273,6 +341,7 @@ function taskSheet(t) {
       durationMin: Number(f.get("durationMin")),
       minChunkMin: Number(f.get("minChunkMin")),
       blocks: f.getAll("blocks"),
+      tags: f.getAll("tags"),
       notes: f.get("notes"),
       dueDate: f.get("dueDate") || null,
     };
@@ -334,7 +403,9 @@ function habitsView() {
   if (!S.habits.length) {
     return html + `<div class="empty"><p>No habits yet. Add one with the + button: something for every day, for a few days a week, or for a number of hours a week.</p></div>`;
   }
-  for (const h of S.habits) {
+  const tag = activeTag(S.habits);
+  html += tagFilterBar(S.habits);
+  for (const h of tag ? S.habits.filter((x) => x.tags.includes(tag)) : S.habits) {
     const [week, next] = habitStatus(h);
     const pct = h.progress.weekTargetMin ? Math.min(100, (h.progress.weekDoneMin / h.progress.weekTargetMin) * 100) : 0;
     html += `<button class="task p${h.priority} ${h.active ? "" : "paused"}" data-habit="${h.id}">
@@ -343,6 +414,7 @@ function habitsView() {
         <span class="meta">${esc([habitRepeats(h), blocksText(h.blocks)].filter(Boolean).join(", "))}</span>
         <span class="meta">${esc(week)}</span>
         ${next ? `<span class="meta">${esc(next)}</span>` : ""}
+        ${tagPills(h.tags)}
         ${h.active && pct ? `<span class="bar"><i style="width:${pct}%"></i></span>` : ""}</span>
     </button>`;
   }
@@ -351,7 +423,7 @@ function habitsView() {
 
 function habitSheet(h) {
   const isNew = !h;
-  h = h || { title: "", kind: "daily", priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [], days: [], timeFrom: null, timeTo: null, active: true };
+  h = h || { title: "", kind: "daily", priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [], tags: tagFilter ? [tagFilter] : [], days: [], timeFrom: null, timeTo: null, active: true };
   const kinds = [["daily", "Every day"], ["days", "Days a week"], ["hours", "Hours a week"]];
   sheet.innerHTML = `<form method="dialog">
     <h2>${isNew ? "New habit" : "Edit habit"}</h2>
@@ -395,6 +467,7 @@ function habitSheet(h) {
     </div>
     <p class="hint">Optional. With both times set, it's planned inside that window on its days, even outside your hours, and block names don't apply to it.</p>
     <div id="h-blocks">${blockPicker(h.blocks ?? [])}</div>
+    ${tagPicker(h.tags ?? [])}
     <div class="foot">
       <button class="btn" value="save">${isNew ? "Add habit" : "Save changes"}</button>
       ${isNew ? "" : `<button class="btn ghost" value="${h.active ? "pause" : "resume"}" formnovalidate>${h.active ? "Pause" : "Resume"}</button>
@@ -411,10 +484,12 @@ function habitSheet(h) {
   };
   form.addEventListener("change", showKind);
   showKind();
+  const takeTypedTag = wireTags(form);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const what = e.submitter?.value;
     if (what === "cancel") return sheet.close();
+    takeTypedTag();
     const f = new FormData(form);
     const max = String(f.get("maxPerDayMin") ?? "").trim();
     const body = {
@@ -427,6 +502,7 @@ function habitSheet(h) {
       minChunkMin: Number(f.get("minChunkMin")),
       maxPerDayMin: max === "" ? null : Number(max),
       blocks: f.getAll("blocks"),
+      tags: f.getAll("tags"),
       days: f.getAll("days").map(Number),
       timeFrom: f.get("timeFrom") || null,
       timeTo: f.get("timeTo") || null,
@@ -680,8 +756,12 @@ function render(force = false) {
 }
 
 view.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-do],[data-edit],[data-habit],[data-h],[data-s],.block .body[role=button]");
+  const el = e.target.closest("[data-do],[data-edit],[data-habit],[data-h],[data-s],[data-tag],.block .body[role=button]");
   if (!el) return;
+  if (el.dataset.tag !== undefined) {
+    tagFilter = el.dataset.tag || null;
+    return render(true);
+  }
   if (el.dataset.do) {
     const block = el.closest(".block");
     const id = block.dataset.block;

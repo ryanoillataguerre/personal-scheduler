@@ -28,6 +28,14 @@ A block with no name takes only work that has nothing picked, and cannot be stri
 
 Names are yours to choose. They can describe a place, a kind of attention or a time of day.
 
+## Tags
+
+Tasks and habits can carry any number of tags, such as `job hunt` or `breakdown`. Add them when you create something or later from its sheet: tick tags you have used before, or type a new one and press Enter. A habit's tags show on its planned blocks too.
+
+The Tasks and Habits tabs get a row of tag buttons once any tag exists; tap one to see only the work with that tag. A new task or habit added while a tag is selected starts with that tag.
+
+Tags are for organizing and filtering only. They have no effect on what is planned or when. They are lower-cased, so `Job hunt` and `job hunt` are the same tag, and they appear in the description of the calendar event.
+
 ## Deadlines
 
 Priority decides the order until a deadline is at risk. Dayloop first plans by priority, then checks every task that has a deadline. Any that would not be finished in time is running out of time: it moves ahead of everything else, including priority 1 work and habits, and the plan is rebuilt. Several such tasks go earliest deadline first.
@@ -173,6 +181,7 @@ npm test        # scheduler and planning-loop tests
 | `src/google.ts` | Sign-in, busy time, calendar events |
 | `src/server.ts` | HTTP API and static files |
 | `src/backup.ts` | Daily database copies and retention |
+| `src/tags.ts` | Tag normalization |
 | `public/` | The phone app, plain JavaScript |
 
 ## Tested and not tested
