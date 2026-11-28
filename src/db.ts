@@ -14,6 +14,8 @@ export interface TaskRow {
   min_chunk_min: number;
   /** Named blocks of hours the task may go in, comma-separated. Null for any. */
   blocks: string | null;
+  /** Labels for organizing and filtering, comma-separated. No effect on scheduling. */
+  tags: string | null;
   notes: string;
   /** "lapsed": a habit occurrence whose day or week ended before it was done. */
   status: "open" | "done" | "lapsed";
@@ -52,6 +54,8 @@ export interface HabitRow {
   max_per_day_min: number | null;
   /** Named blocks of hours the habit may go in, comma-separated. Null for any. */
   blocks: string | null;
+  /** Labels for organizing and filtering, comma-separated. Its occurrences carry them too. */
+  tags: string | null;
   /** ISO weekdays it may be done on ("1,3,5" for Mon, Wed, Fri). Null for any day. */
   days: string | null;
   /** A set time of day ("HH:MM" to "HH:MM"). Both null for no set time. */
@@ -149,6 +153,7 @@ db.exec(`
     done_min INTEGER NOT NULL DEFAULT 0,
     min_chunk_min INTEGER NOT NULL,
     blocks TEXT,
+    tags TEXT,
     notes TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'open',
     missed_count INTEGER NOT NULL DEFAULT 0,
@@ -177,6 +182,7 @@ db.exec(`
     min_chunk_min INTEGER NOT NULL DEFAULT 30,
     max_per_day_min INTEGER,
     blocks TEXT,
+    tags TEXT,
     days TEXT,
     time_from TEXT,
     time_to TEXT,
@@ -205,6 +211,8 @@ const habitColumns = new Set((db.prepare("PRAGMA table_info(habits)").all() as {
 for (const col of ["days", "time_from", "time_to"]) {
   if (!habitColumns.has(col)) db.exec(`ALTER TABLE habits ADD COLUMN ${col} TEXT`);
 }
+if (!taskColumns.has("tags")) db.exec("ALTER TABLE tasks ADD COLUMN tags TEXT");
+if (!habitColumns.has("tags")) db.exec("ALTER TABLE habits ADD COLUMN tags TEXT");
 const blockColumns = new Set((db.prepare("PRAGMA table_info(blocks)").all() as { name: string }[]).map((c) => c.name));
 if (!blockColumns.has("credit_min")) db.exec("ALTER TABLE blocks ADD COLUMN credit_min INTEGER");
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS tasks_by_habit_period ON tasks(habit_id, period_start) WHERE habit_id IS NOT NULL");

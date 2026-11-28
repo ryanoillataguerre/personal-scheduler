@@ -29,7 +29,7 @@ before(async () => {
   dbm.saveHours({ weekly: { "1": day, "2": day, "3": day, "4": day, "5": day, "6": day, "7": day }, overrides: {} });
 });
 
-const base = { priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [] as string[], days: [] as number[], timeFrom: null as string | null, timeTo: null as string | null };
+const base = { priority: 2, sessionMin: 30, daysPerWeek: 3, weeklyMin: 300, minChunkMin: 30, maxPerDayMin: null, blocks: [] as string[], tags: [] as string[], days: [] as number[], timeFrom: null as string | null, timeTo: null as string | null };
 const blocks = (habitId: number, status?: string) =>
   (
     dbm.db
@@ -236,6 +236,27 @@ test("a weekly habit's first week is shared out over the days it can still be do
   const gym = habits.createHabit({ ...base, title: "Gym", kind: "days", sessionMin: 60, daysPerWeek: 3, days: [1, 3, 5] }, at("2026-12-10T08:00"));
   planner.planNow(at("2026-12-10T08:00"), []);
   assert.deepEqual(occurrences(gym).map((t) => t.duration_min), [60, 180, 180]);
+  wipe();
+});
+
+test("a habit's tags are carried by its occurrences, and edits reach the open ones", () => {
+  const id = habits.createHabit({ ...base, title: "LeetCode", kind: "daily", tags: ["interview prep", "job"] }, at("2026-12-07T08:00"));
+  planner.planNow(at("2026-12-07T08:00"), []);
+  assert.equal(occurrences(id)[0].tags, "interview prep,job");
+
+  // Finish Monday's, then retag the habit: the finished one keeps what it had.
+  planner.completeBlock(blocks(id)[0].id, at("2026-12-07T09:30"));
+  habits.updateHabit(id, habits.parseHabit({ tags: ["Prep", " prep ", "#Job"] }, habits.getHabit(id)!));
+  planner.planNow(at("2026-12-07T09:35"), []);
+  const rows = occurrences(id);
+  assert.deepEqual([rows[0].status, rows[0].tags], ["done", "interview prep,job"]);
+  assert.equal(rows[1].tags, "job,prep");
+  // The calendar event shows tags, so the change is queued for Google.
+  assert.equal(blocks(id, "planned")[0].synced, 0);
+
+  habits.updateHabit(id, habits.parseHabit({ tags: [] }, habits.getHabit(id)!));
+  planner.planNow(at("2026-12-07T09:40"), []);
+  assert.equal(occurrences(id)[1].tags, null);
   wipe();
 });
 
