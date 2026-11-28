@@ -8,6 +8,7 @@
   --p2: #C97A06;
   --p3: #2A7F86;
   --p4: #7F8C98;
+  --b0: #2A7F86; --b1: #C97A06; --b2: #7B5CC4; --b3: #C8324E; --b4: #3E8F5B; --b5: #5B7FB8;
   --warn-bg: #FBE9C8;
   --warn-ink: #5C3B00;
   --on-color: #fff;
@@ -26,6 +27,7 @@
     --p2: #E9A63A;
     --p3: #55B7BE;
     --p4: #94A1AD;
+    --b0: #55B7BE; --b1: #E9A63A; --b2: #A792E8; --b3: #F06A84; --b4: #6CC08A; --b5: #8FB0E0;
     --warn-bg: #3D2E0C;
     --warn-ink: #F4D793;
     --on-color: #10201C;
@@ -135,6 +137,59 @@ button { cursor: pointer; }
 .bar i { display: block; height: 100%; background: var(--pc); }
 
 /* ---- Hours ---- */
+/* The week at a glance: read-only. */
+.week { margin: 0 0 1rem; padding: 0.9rem 0.9rem 0.8rem 0.5rem; background: var(--surface); border-radius: var(--radius); }
+.week > header { display: flex; justify-content: space-between; align-items: baseline; padding-left: 0.4rem; margin-bottom: 0.7rem; }
+.week > header b { font-weight: 700; }
+.week > header span { color: var(--muted); font-size: 0.9375rem; }
+.week-grid { display: grid; grid-template-columns: 2.5rem repeat(7, minmax(0, 1fr)); column-gap: 4px; }
+.week-head { margin-bottom: 0.45rem; }
+.week-head > div { text-align: center; font-size: 0.6875rem; line-height: 1.25; color: var(--muted); position: relative; }
+.week-head b { display: block; font-size: 0.9375rem; font-weight: 600; color: var(--ink); }
+.week-head .today { color: var(--ink); }
+.week-head .today b {
+  width: 1.6rem; height: 1.6rem; line-height: 1.6rem; margin: 0 auto; border-radius: 50%;
+  background: var(--ink); color: var(--paper);
+}
+.week .dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--p1); }
+.week-head .dot { position: absolute; top: 2px; right: 2px; }
+.week-body { position: relative; }
+.week-body .axis { position: static; }
+.week-body .line { position: absolute; left: 2.5rem; right: 0; height: 0; border-top: 1px solid var(--line); }
+.week-body .line.minor { border-top-style: dotted; opacity: 0.6; }
+.week-body .line span {
+  position: absolute; right: 100%; top: -0.55em; width: 2.5rem; padding-right: 0.45rem;
+  text-align: right; font-size: 0.6875rem; line-height: 1.1; font-style: normal; color: var(--muted); white-space: nowrap;
+}
+.week-body .col { position: relative; border-radius: 8px; }
+.week-body .col.today { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.blk, .sw { --bc: var(--muted); }
+.c0 { --bc: var(--b0); } .c1 { --bc: var(--b1); } .c2 { --bc: var(--b2); }
+.c3 { --bc: var(--b3); } .c4 { --bc: var(--b4); } .c5 { --bc: var(--b5); }
+.blk {
+  position: absolute; left: 0; right: 0; border-radius: 7px; overflow: hidden;
+  background: color-mix(in srgb, var(--bc) 24%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--bc) 60%, transparent);
+  color: var(--ink);
+}
+.blk.strict { background: var(--bc); box-shadow: none; color: var(--on-color); }
+.blk span {
+  display: block; padding: 0.3rem 1px 0; text-align: center; font-size: 0.625rem; font-weight: 600; line-height: 1.15;
+  letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* On narrow phones the names don't fit a column; the legend carries them. */
+@media (max-width: 22.5rem) { .blk span { display: none; } }
+.week-body .now { position: absolute; left: -2px; right: -2px; height: 2px; margin-top: -1px; background: var(--ink); border-radius: 1px; z-index: 2; }
+.week-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; margin: 0.85rem 0 0; padding: 0 0 0 0.4rem; font-size: 0.875rem; }
+.week-legend li { display: flex; align-items: center; gap: 0.4rem; }
+.week-legend span { color: var(--muted); }
+.sw {
+  width: 0.85rem; height: 0.85rem; border-radius: 4px; flex: none;
+  background: color-mix(in srgb, var(--bc) 24%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--bc) 60%, transparent);
+}
+.sw.strict { background: var(--bc); box-shadow: none; }
+
 .hday { background: var(--surface); border-radius: var(--radius); padding: 0.7rem 0.9rem; margin: 0 0 6px; }
 .hday header { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
 .hday header b { font-weight: 600; }
