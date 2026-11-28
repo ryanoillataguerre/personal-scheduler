@@ -459,10 +459,87 @@ function rangesHtml(scope, key, list) {
     </div>`).join("");
 }
 
+/**
+ * Read-only picture of this week's hours: one column per day, blocks placed
+ * by time of day. Drawn from the draft, so edits below show up at once.
+ */
+function weekChart(h) {
+  const mins = (t) => (/^\d\d:\d\d$/.test(t ?? "") ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3)) : NaN);
+  // Work in UTC-noon dates so stepping through the week is safe across clock changes.
+  const todayKey = dayKey(S.now);
+  const today = new Date(todayKey + "T12:00:00Z");
+  const monday = new Date(today.getTime() - ((today.getUTCDay() + 6) % 7) * 86400000);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday.getTime() + i * 86400000);
+    const date = d.toISOString().slice(0, 10);
+    const oneOff = date in h.overrides;
+    const ranges = ((oneOff ? h.overrides[date] : h.weekly[i + 1]) ?? [])
+      .map((r) => ({ ...r, a: mins(r.start), b: mins(r.end) }))
+      .filter((r) => r.b > r.a);
+    days.push({ date, oneOff, ranges, dom: d.getUTCDate(), letter: DAYS[i + 1].slice(0, 3), today: date === todayKey });
+  }
+  const all = days.flatMap((d) => d.ranges);
+  if (!all.length) {
+    return `<figure class="week"><p class="muted small" style="margin:0">No hours this week yet. Add some below and they'll be drawn here.</p></figure>`;
+  }
+
+  // Fit the time axis to the hours in use, on whole hours.
+  let lo = Math.floor(Math.min(...all.map((r) => r.a)) / 60);
+  let hi = Math.ceil(Math.max(...all.map((r) => r.b)) / 60);
+  while (hi - lo < 6) hi < 24 ? hi++ : lo--;
+  const perHour = Math.max(20, Math.min(36, Math.round(300 / (hi - lo))));
+  const y = (m) => ((m - lo * 60) / 60) * perHour;
+  const height = (hi - lo) * perHour;
+
+  const names = [...new Set(all.map((r) => r.name).filter(Boolean))].sort();
+  const color = (name) => (name ? `c${names.indexOf(name) % 6}` : "plain");
+  const total = (list) => list.reduce((sum, r) => sum + (r.b - r.a), 0);
+  const hourLabel = (hr) => new Intl.DateTimeFormat(undefined, { hour: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(2000, 0, 1, hr % 24)));
+  const step = perHour >= 26 ? 1 : 2;
+
+  let lines = "";
+  for (let hr = lo; hr <= hi; hr++) {
+    lines += `<i class="line ${(hr - lo) % step ? "minor" : ""}" style="top:${(hr - lo) * perHour}px">${(hr - lo) % step ? "" : `<span>${hourLabel(hr)}</span>`}</i>`;
+  }
+
+  const nowParts = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: zone() }).format(S.now);
+  const nowMin = mins(nowParts);
+  const cols = days.map((d) => {
+    const blocks = d.ranges.map((r) => {
+      const hgt = Math.max(6, y(r.b) - y(r.a) - 2);
+      return `<div class="blk ${color(r.name)} ${r.strict ? "strict" : ""}" style="top:${y(r.a) + 1}px;height:${hgt}px">${hgt >= 30 && r.name ? `<span>${esc(r.name)}</span>` : ""}</div>`;
+    }).join("");
+    const now = d.today && nowMin >= lo * 60 && nowMin <= hi * 60 ? `<i class="now" style="top:${y(nowMin)}px"></i>` : "";
+    return `<div class="col ${d.today ? "today" : ""}">${blocks}${now}</div>`;
+  }).join("");
+
+  const head = days.map((d) => `<div class="${d.today ? "today" : ""}">${d.letter}<b>${d.dom}</b>${d.oneOff ? `<i class="dot" title="One-off day"></i>` : ""}</div>`).join("");
+
+  const legend = [...names, null]
+    .map((name) => {
+      const list = all.filter((r) => (r.name ?? null) === name);
+      if (!list.length) return "";
+      const strict = list.some((r) => r.strict);
+      return `<li><i class="sw ${color(name)} ${strict ? "strict" : ""}"></i>${esc(name ?? "unnamed")} <span>${dur(total(list))}${strict ? ", reserved" : ""}</span></li>`;
+    }).join("");
+
+  const summary = `This week's hours: ${dur(total(all))} in total. ` +
+    days.filter((d) => d.ranges.length).map((d) => `${d.letter} ${d.ranges.map((r) => `${r.start} to ${r.end}${r.name ? ` ${r.name}` : ""}`).join(", ")}`).join("; ");
+
+  return `<figure class="week" role="img" aria-label="${esc(summary)}">
+    <header><b>This week</b><span>${dur(total(all))}</span></header>
+    <div class="week-grid week-head"><div></div>${head}</div>
+    <div class="week-grid week-body" style="height:${height}px"><div class="axis">${lines}</div>${cols}</div>
+    <ul class="week-legend">${legend}${days.some((d) => d.oneOff) ? `<li><i class="dot"></i>one-off day</li>` : ""}</ul>
+  </figure>`;
+}
+
 function hoursView() {
   const h = (hoursDraft ??= cloneHours());
   let html = `<h1>Hours</h1><p class="sub">When work may be planned. Give a block of hours a name, like focus, home or review, and each task or habit can then be limited to the blocks you pick for it. A named block can also be kept only for the work that picks it.</p>
-    <datalist id="names-h">${blockNames().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>`;
+    <datalist id="names-h">${blockNames().map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
+    ${weekChart(h)}`;
   for (let d = 1; d <= 7; d++) {
     html += `<div class="hday"><header><b>${DAYS[d]}</b><button class="link" data-h="add" data-scope="weekly" data-key="${d}">Add hours</button></header>
       ${rangesHtml("weekly", d, h.weekly[d] ?? [])}</div>`;

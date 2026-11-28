@@ -12,6 +12,8 @@ Each task has:
 
 You set working hours per weekday, with one-off changes for single dates.
 
+The Hours tab opens with a picture of the current week: one column per day, each block of hours drawn at its time of day and colored by name, with a filled block meaning it is reserved. It reflects one-off days and updates as you edit, before you save. It is read-only; the lists below it are where you change things.
+
 ## Named blocks
 
 Each block of hours can be given a name, such as `focus`, `home` or `review`. A task or habit can then be limited to the blocks you pick for it, any number of them:
