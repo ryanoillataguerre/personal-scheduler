@@ -91,6 +91,16 @@ docker compose up -d --build
 
 Open http://localhost:8787 on the machine.
 
+## Updating
+
+```sh
+make update
+```
+
+This pulls the latest `main` and rebuilds. The running app is only swapped for the new one once the build has finished, and if the pull or the build fails the old version keeps running. Run `make` on its own to list the other shortcuts (`up`, `down`, `restart`, `logs`, `status`, `test`).
+
+If `make` is not installed: `sudo apt install make`.
+
 ## Where your data lives
 
 Everything is in one SQLite file, `./data/dayloop.db`, next to `docker-compose.yml`: tasks, hours, settings and the Google sign-in. `./data` is an ordinary folder on the machine that the container is given access to. It is not a Docker-managed volume, so `docker compose down`, `down -v`, rebuilding the image and `docker system prune` do not touch it. Deleting the folder itself, or the disk failing, is what would lose it.
